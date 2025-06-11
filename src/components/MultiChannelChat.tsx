@@ -276,9 +276,8 @@ export function MultiChannelChat() {
         return <AlertCircle className='h-4 w-4 text-gray-500' />;
     }
   };
-
   return (
-    <div className='grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-200px)]'>
+    <div className='grid grid-cols-1 lg:grid-cols-4 gap-4 h-full w-full min-h-[calc(100vh-240px)] max-w-full mx-auto container'>
       {/* Painel de Chamados Pendentes */}
       <div className='lg:col-span-1'>
         <Card className='h-full flex flex-col'>

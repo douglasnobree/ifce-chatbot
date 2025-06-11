@@ -28,16 +28,14 @@ export default function AtendimentoPage() {
             </div>
             <UserMenu />
           </div>
-        </header>
-
-        <main className='flex-1 container px-4 py-6'>
+        </header>{' '}
+        <main className='flex-1 w-full mx-auto px-0 py-6 mb-16 sm:mb-10'>
           <ActiveChannelsProvider>
             <MultiChannelChat />
           </ActiveChannelsProvider>
         </main>
-
-        <footer className='border-t bg-white/50 backdrop-blur'>
-          <div className='container px-4 py-3'>
+        <footer className='border-t bg-white/75 backdrop-blur fixed bottom-0 left-0 right-0 z-10'>
+          <div className='container mx-auto px-4 py-3'>
             <div className='flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600'>
               <p>Sistema de Atendimento IFCE WhatsApp</p>
               <p className='mt-1 sm:mt-0'>
