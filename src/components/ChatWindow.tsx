@@ -44,39 +44,45 @@ export function ChatWindow({
     onSendMessage(messageText);
     setMessageText('');
   };
-
   // Função para renderizar diferentes tipos de mensagens
   const renderMessage = (msg: ChatMessage, index: number) => {
     // Detecta se é mensagem do sistema
-    const isSystemMessage = msg.sender === 'sistema';
+    const isSystemMessage = msg.sender === 'SISTEMA';
 
     // Determina estilo baseado no remetente
-    const isUser = msg.sender === 'usuario';
+    const isUser = msg.sender === 'USUARIO';
+    const isAttendant = msg.sender === 'ATENDENTE';
+    
     const bgColor = isSystemMessage
       ? 'bg-gray-100 text-gray-700'
       : isUser
       ? 'bg-blue-100 text-blue-900'
       : 'bg-green-100 text-green-900';
 
+    // Alinhamento: usuário à esquerda, atendente à direita, sistema no centro
     const alignment = isSystemMessage
       ? 'mx-auto text-center italic max-w-xs'
       : isUser
-      ? 'ml-auto'
-      : 'mr-auto';
+      ? 'mr-auto' // Usuário à esquerda
+      : 'ml-auto'; // Atendente à direita
 
     return (
       <div key={index} className={`mb-3 max-w-[75%] ${alignment}`}>
         {!isSystemMessage && (
-          <div className='flex items-center gap-2 mb-1'>
-            <div
-              className={`h-6 w-6 rounded-full flex items-center justify-center ${
-                isUser ? 'bg-blue-500' : 'bg-green-500'
-              } text-white`}>
-              {isUser ? 'U' : 'A'}
-            </div>
+          <div className={`flex items-center gap-2 mb-1 ${isUser ? '' : 'justify-end'}`}>
+            {isUser && (
+              <div className="h-6 w-6 rounded-full flex items-center justify-center bg-blue-500 text-white">
+                U
+              </div>
+            )}
             <span className='text-xs font-medium'>
-              {isUser ? msg.nome || 'Você' : msg.nome || 'Atendente'}
+              {isUser ? msg.nome || 'Usuário' : msg.nome || 'Atendente'}
             </span>
+            {isAttendant && (
+              <div className="h-6 w-6 rounded-full flex items-center justify-center bg-green-500 text-white">
+                A
+              </div>
+            )}
           </div>
         )}
 

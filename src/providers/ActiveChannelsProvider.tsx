@@ -18,7 +18,7 @@ export type ActiveChannel = {
   lastMessageTime?: Date;
   unreadCount: number;
   messages: ChatMessage[];
-  sessionId: string // ID da sessão de atendimento, se aplicável
+  sessionId: string; // ID da sessão de atendimento, se aplicável
   isActive: boolean; // Indica se está selecionado atualmente
   studentInfo?: {
     name?: string;
@@ -35,7 +35,9 @@ export type ActiveChannelsContextType = {
 
   // Métodos para gerenciar canais
   addChannel: (
-    channel: Omit<ActiveChannel, 'isActive' | 'messages' | 'unreadCount'>
+    channel: Omit<ActiveChannel, 'isActive' | 'unreadCount'> & {
+      messages?: ChatMessage[];
+    }
   ) => void;
   removeChannel: (channelId: string) => void;
   setCurrentChannel: (channelId: string) => void;
@@ -55,15 +57,16 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
   const [activeChannels, setActiveChannels] = useState<ActiveChannel[]>([]);
   const [pendingChannels, setPendingChannels] = useState<ActiveChannel[]>([]);
   const [currentChannelId, setCurrentChannelId] = useState<string | null>(null);
-
   // Adicionar um novo canal (com useCallback para manter a referência estável)
   const addChannel = useCallback(
     (
-      channelData: Omit<ActiveChannel, 'isActive' | 'messages' | 'unreadCount'>
+      channelData: Omit<ActiveChannel, 'isActive' | 'unreadCount'> & {
+        messages?: ChatMessage[];
+      }
     ) => {
       const newChannel: ActiveChannel = {
         ...channelData,
-        messages: [],
+        messages: channelData.messages || [],
         unreadCount: 0,
         isActive: false,
       };
@@ -71,34 +74,49 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
       // Se é um canal pendente, adiciona aos pendentes
       if (channelData.status === 'aguardando') {
         setPendingChannels((prev) => {
-          if (prev.some((c) => c.id === channelData.id)) {
-            return prev;
+          // Se já existe, atualiza apenas as propriedades, mas mantém as mensagens existentes
+          const existingChannel = prev.find((c) => c.id === channelData.id);
+          if (existingChannel) {
+            return prev.map((c) => {
+              if (c.id === channelData.id) {
+                return {
+                  ...c,
+                  ...channelData,
+                  messages: channelData.messages?.length
+                    ? channelData.messages
+                    : c.messages,
+                };
+              }
+              return c;
+            });
           }
           return [...prev, newChannel];
         });
       } else {
         // Caso contrário, adiciona aos canais ativos
         setActiveChannels((prev) => {
-          if (prev.some((c) => c.id === channelData.id)) {
-            return prev;
-          }
-
-          const newChannels = [...prev, newChannel];
-
-          // Se não houver canal selecionado, seleciona este
-          if (!currentChannelId) {
-            setCurrentChannelId(newChannel.id);
-            return newChannels.map((c) => ({
-              ...c,
-              isActive: c.id === newChannel.id,
-            }));
-          }
-
-          return newChannels;
+          // Se já existe, atualiza apenas as propriedades, mas mantém as mensagens existentes
+          const existingChannel = prev.find((c) => c.id === channelData.id);
+          if (existingChannel) {
+            return prev.map((c) => {
+              if (c.id === channelData.id) {
+                return {
+                  ...c,
+                  ...channelData,
+                  messages: channelData.messages?.length
+                    ? channelData.messages
+                    : c.messages,
+                };
+              }
+              return c;
+            });
+          } // Apenas retorna os novos canais, sem atualizar o currentChannelId automaticamente
+          // Isso evita um ciclo infinito de atualizações
+          return [...prev, newChannel];
         });
       }
     },
-    [currentChannelId] // Só depende do currentChannelId
+    [] // Não depende de nenhum estado, para evitar ciclos infinitos
   );
   // Remover um canal (com useCallback)
   const removeChannel = useCallback(
@@ -145,10 +163,20 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
         isActive: channel.id === channelId,
       }))
     );
-  }, []);
-  // Adicionar mensagem a um canal (com useCallback)
+  }, []); // Adicionar mensagem a um canal (com useCallback)
   const addMessageToChannel = useCallback(
     (channelId: string, message: ChatMessage) => {
+      // Função helper para verificar mensagens duplicadas
+      const isDuplicateMessage = (
+        existingMessages: ChatMessage[],
+        newMessage: ChatMessage
+      ) => {
+        return existingMessages.some(
+          (m) =>
+            m.mensagem === newMessage.mensagem && m.sender === newMessage.sender
+        );
+      };
+
       // Primeiro verifica se o canal está entre os ativos
       setActiveChannels((prev) => {
         const isActive = prev.some((c) => c.id === channelId);
@@ -156,6 +184,11 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
         if (isActive) {
           return prev.map((channel) => {
             if (channel.id === channelId) {
+              // Verifica se a mensagem já existe no canal
+              if (isDuplicateMessage(channel.messages, message)) {
+                return channel; // Não adiciona mensagens duplicadas
+              }
+
               return {
                 ...channel,
                 messages: [...channel.messages, message],
@@ -178,6 +211,11 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
         if (isPending) {
           return prev.map((channel) => {
             if (channel.id === channelId) {
+              // Verifica se a mensagem já existe no canal
+              if (isDuplicateMessage(channel.messages, message)) {
+                return channel; // Não adiciona mensagens duplicadas
+              }
+
               return {
                 ...channel,
                 messages: [...channel.messages, message],
@@ -206,26 +244,23 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
         return channel;
       });
     });
-  }, []);
-
-  // Atualizar o status de um canal (com useCallback)
+  }, []); // Atualizar o status de um canal (com useCallback)
   const updateChannelStatus = useCallback(
     (channelId: string, status: ActiveChannel['status']) => {
       // Se o status é "em_atendimento", move de pendentes para ativos
       if (status === 'em_atendimento') {
-        // Pegamos a referência do canal pendente
+        // Buscamos o canal pendente pelo ID para movê-lo para os ativos
         const pendingChannel = pendingChannels.find((c) => c.id === channelId);
 
         if (pendingChannel) {
-          // Remove dos pendentes
-          setPendingChannels((prev) => prev.filter((c) => c.id !== channelId));
-
-          // Adiciona aos ativos com o status atualizado
+          // Aqui estamos preservando as mensagens do canal pendente (pendingChannel.messages)
           const updatedChannel: ActiveChannel = {
             ...pendingChannel,
             status: 'em_atendimento',
             isActive: true,
             unreadCount: 0,
+            // Mantém explicitamente as mensagens existentes do canal pendente
+            messages: pendingChannel.messages,
           };
 
           setActiveChannels((prev) => {
@@ -236,6 +271,18 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
                 ...c,
                 isActive: c.id === channelId,
                 status: c.id === channelId ? status : c.status,
+                // Mantém as mensagens existentes
+                messages:
+                  c.id === channelId
+                    ? // Mescla as mensagens do canal pendente e do canal ativo (se houver)
+                      [
+                        ...c.messages,
+                        ...pendingChannel.messages.filter(
+                          (pm) =>
+                            !c.messages.some((m) => m.mensagem === pm.mensagem)
+                        ),
+                      ]
+                    : c.messages,
               }));
             }
 

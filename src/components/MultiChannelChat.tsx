@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useActiveChannels } from '@/hooks/useActiveChannels';
 import {
   useWebSocket,
   useChatEvents,
   useChatActions,
+  ChatMessage,
 } from '@/hooks/useWebSocket';
 import { useAuth } from '@/providers/AuthProvider';
 import { Badge } from '@/components/ui/badge';
@@ -62,113 +63,158 @@ export function MultiChannelChat() {
 
   const { socket } = useWebSocket();
   const actions = useChatActions(socket);
-  const { user } = useAuth();
-  // Estado para controlar carregamento
+  const { user } = useAuth(); // Estado para controlar carregamento
   const [isLoading, setIsLoading] = useState(false);
+  // Ref para armazenar os IDs de canais que já tiveram histórico solicitado
+  const loadedHistoryChannelsRef = useRef<Set<string>>(new Set());
+  // Ref para rastrear protocolos já processados
+  const processedProtocolsRef = useRef<Set<string>>(new Set());
+  // Cache de canais - evita ficar chamando activeChannels.find() repetidamente
+  const channelCacheRef = useRef<Record<string, boolean>>({});
+  // Variáveis para mapear o status e transformar protocolo em canal
+  const mapStatus = (
+    status: string
+  ): 'aguardando' | 'em_atendimento' | 'encerrado' => {
+    switch (status) {
+      case 'ABERTO':
+        return 'aguardando';
+      case 'EM_ATENDIMENTO':
+        return 'em_atendimento';
+      case 'FECHADO':
+      case 'CANCELADO':
+        return 'encerrado';
+      default:
+        return 'aguardando';
+    }
+  };
+
+  // Função para converter protocolo para o formato de canal - definida fora do useEffect
+  const mapProtocoloToChannel = (protocolo: Protocolo) => {
+    // Obtém a última mensagem do protocolo, se disponível
+    const ultimaMensagem =
+      protocolo.mensagens_protocolo && protocolo.mensagens_protocolo.length > 0
+        ? protocolo.mensagens_protocolo[
+            protocolo.mensagens_protocolo.length - 1
+          ].conteudo
+        : protocolo.assunto || 'Novo atendimento';
+
+    // Converte as mensagens do protocolo para o formato de mensagens do chat
+    const mensagensChat: ChatMessage[] = protocolo.mensagens_protocolo
+      ? protocolo.mensagens_protocolo.map((msg) => ({
+          mensagem: msg.conteudo,
+          sender:
+            msg.origem === 'ATENDENTE'
+              ? 'ATENDENTE'
+              : msg.origem === 'SISTEMA'
+              ? 'SISTEMA'
+              : 'USUARIO',
+          timestamp: new Date(msg.timestamp),
+        }))
+      : [];
+
+    return {
+      id: protocolo.id,
+      name: protocolo.estudante?.nome || `Protocolo ${protocolo.numero}`,
+      status: mapStatus(protocolo.status),
+      lastMessage: ultimaMensagem,
+      lastMessageTime: new Date(protocolo.data_criacao),
+      sessionId: protocolo.sessao_id || protocolo.id,
+      // Adicionando as mensagens históricas do protocolo
+      messages: mensagensChat,
+      studentInfo: protocolo.estudante
+        ? {
+            name: protocolo.estudante.nome,
+            id: protocolo.estudante.id,
+            course: protocolo.estudante.curso,
+            contactInfo: protocolo.estudante.telefone,
+          }
+        : undefined,
+    };
+  };
+
   // Efeito para carregar os atendimentos do backend
   useEffect(() => {
+    if (!socket) return;
+
     setIsLoading(true);
 
-    // Função para mapear o status do backend para o formato do front
-    const mapStatus = (
-      status: string
-    ): 'aguardando' | 'em_atendimento' | 'encerrado' => {
-      switch (status) {
-        case 'ABERTO':
-          return 'aguardando';
-        case 'EM_ATENDIMENTO':
-          return 'em_atendimento';
-        case 'FECHADO':
-        case 'CANCELADO':
-          return 'encerrado';
-        default:
-          return 'aguardando';
-      }
-    };
-
-    // Função para converter protocolo para o formato de canal
-    const mapProtocoloToChannel = (protocolo: Protocolo) => {
-      // Obtém a última mensagem do protocolo, se disponível
-      const ultimaMensagem =
-        protocolo.mensagens_protocolo &&
-        protocolo.mensagens_protocolo.length > 0
-          ? protocolo.mensagens_protocolo[
-              protocolo.mensagens_protocolo.length - 1
-            ].conteudo
-          : protocolo.assunto || 'Novo atendimento';
-
-      return {
-        id: protocolo.id,
-        name: protocolo.estudante?.nome || `Protocolo ${protocolo.numero}`,
-        status: mapStatus(protocolo.status),
-        lastMessage: ultimaMensagem,
-        lastMessageTime: new Date(protocolo.data_criacao),
-        sessionId: protocolo.sessao_id || protocolo.id,
-        studentInfo: protocolo.estudante
-          ? {
-              name: protocolo.estudante.nome,
-              id: protocolo.estudante.id,
-              course: protocolo.estudante.curso,
-              contactInfo: protocolo.estudante.telefone,
-            }
-          : undefined,
-      };
-    }; // Handler para o evento 'atendimentosAbertos'
+    // Handler para o evento 'atendimentosAbertos'
     const handleAtendimentosAbertos = (protocolos: Protocolo[]) => {
-      console.log('Atendimentos recebidos:', protocolos);
+      console.log(protocolos);
 
-      // Converter protocolos para o formato de canais e adicionar
-      protocolos.forEach((protocolo) => {
-        const channel = mapProtocoloToChannel(protocolo);
-        addChannel(channel);
-      });
+      // Usar um pequeno atraso para garantir que estamos fora do ciclo de renderização
+      setTimeout(() => {
+        // Processar apenas protocolos que não foram processados antes
+        const novosProtocolos = protocolos.filter((protocolo) => {
+          if (processedProtocolsRef.current.has(protocolo.id)) return false;
+          processedProtocolsRef.current.add(protocolo.id);
+          return true;
+        });
 
-      setIsLoading(false);
+        if (novosProtocolos.length === 0) {
+          setIsLoading(false);
+          return;
+        }
+
+        // Processar em batch para evitar múltiplas atualizações
+        const canaisParaAdicionar = novosProtocolos.map(mapProtocoloToChannel);
+
+        // Usar um batch para adicionar todos os canais de uma vez
+        canaisParaAdicionar.forEach((channel) => {
+          // Usa channelCacheRef em vez de verificar os arrays activeChannels e pendingChannels diretamente
+          if (!channelCacheRef.current[channel.id]) {
+            addChannel(channel);
+            channelCacheRef.current[channel.id] = true;
+          }
+        });
+
+        setIsLoading(false);
+      }, 100); // Delay maior para garantir que outros processos já terminaram
     };
 
-    // Configurar eventos do socket manualmente em vez de usar useChatEvents
-    if (socket) {
-      // Limpar listener anterior se existir
-      socket.off('atendimentosAbertos', handleAtendimentosAbertos);
+    // Limpar listener anterior se existir
+    socket.off('atendimentosAbertos', handleAtendimentosAbertos);
 
-      // Registrar novo listener
-      socket.on('atendimentosAbertos', handleAtendimentosAbertos);
+    // Registrar novo listener
+    socket.on('atendimentosAbertos', handleAtendimentosAbertos);
 
-      // Solicitar a lista de atendimentos
-      actions.listarAtendimentos();
-    }
+    // Solicitar a lista de atendimentos
+    actions.listarAtendimentos();
 
     // Cleanup quando o componente for desmontado
     return () => {
-      if (socket) {
-        socket.off('atendimentosAbertos', handleAtendimentosAbertos);
-      }
+      socket.off('atendimentosAbertos', handleAtendimentosAbertos);
     };
+  }, [socket]); // Removidas as dependências problemáticas para evitar loops
 
-    // Não precisamos de cleanup manual pois useChatEvents já cuida disso
-  }, [socket, addChannel, actions]); // Incluindo addChannel na dependência com segurança// Função para atender um chamado pendente
+  // Função para atender um chamado pendente
   const handleAttendChannel = (channelId: string) => {
     setIsLoading(true);
 
-    // Atualiza o status do canal para "em_atendimento"
-    updateChannelStatus(channelId, 'em_atendimento');
-
     const channel = pendingChannels.find((c) => c.id === channelId);
 
-    // Entra no atendimento usando as informações do usuário logado
-    if (channel) {
-      console.log(channel)
-      actions.entrarAtendimento({
-        // @ts-ignore
-        sessao_id: channel?.sessionId, // Este é o ID do protocolo no backend
-        nome: user?.firstName || 'Atendente',
-        setor: user?.departamento || 'Geral',
-        atendenteId: user?.atendenteId || 'unknown',
-      });
+    if (!channel) {
+      setIsLoading(false);
+      return;
     }
+
+    console.log('Atendendo canal:', channel);
+
+    // Mostra que estamos atendendo o canal, mantendo todas as mensagens existentes
+    updateChannelStatus(channelId, 'em_atendimento');
+
+    // Entra no atendimento usando as informações do usuário logado
+    actions.entrarAtendimento({
+      // @ts-ignore
+      sessao_id: channel?.sessionId, // Este é o ID do protocolo no backend
+      nome: user?.firstName || 'Atendente',
+      setor: user?.departamento || 'Geral',
+      atendenteId: user?.atendenteId || 'unknown',
+    });
 
     setIsLoading(false);
   };
+
   // Função para encerrar um atendimento
   const handleCloseChannel = (channelId: string) => {
     if (window.confirm('Deseja realmente encerrar este atendimento?')) {
@@ -178,7 +224,9 @@ export function MultiChannelChat() {
       // Remove o canal da interface
       removeChannel(channelId);
     }
-  }; // Função para enviar uma mensagem
+  };
+
+  // Função para enviar uma mensagem
   const handleSendMessage = (channelId: string, message: string) => {
     if (!channelId || !message.trim()) return;
 
@@ -190,19 +238,27 @@ export function MultiChannelChat() {
     });
 
     console.log(`Mensagem enviada para o protocolo ${channelId}: ${message}`);
-  }; // Configurar eventos para mensagens e marcar como lidas quando o canal atual muda
+  };
+  // Efeito separado apenas para marcar como lido quando um canal é selecionado
+  useEffect(() => {
+    if (!currentChannelId) return;
+
+    // Marcar mensagens como lidas ao selecionar o canal
+    // Usamos setTimeout para quebrar o ciclo de renderização
+    setTimeout(() => {
+      markChannelAsRead(currentChannelId);
+    }, 0);
+  }, [currentChannelId]); // Removida dependência de markChannelAsRead
+  // Efeito separado para configurar os listeners de eventos
   useEffect(() => {
     if (!socket) return;
 
-    // Marcar mensagens como lidas ao selecionar o canal
-    if (currentChannelId) {
-      markChannelAsRead(currentChannelId);
-    } // Handler para novas mensagens
+    // Handler para novas mensagens
     const handleNovaMensagem = (msg: {
       sessao_id?: string;
       protocolo_id?: string;
       mensagem: string;
-      sender: 'usuario' | 'atendente' | 'sistema';
+      sender: 'USUARIO' | 'ATENDENTE' | 'SISTEMA';
       nome?: string;
       setor?: string;
       mediaUrl?: string;
@@ -215,27 +271,30 @@ export function MultiChannelChat() {
       const targetChannelId = msg.protocolo_id || msg.sessao_id;
 
       if (targetChannelId) {
-        // Adicionar a mensagem ao canal correspondente
-        addMessageToChannel(targetChannelId, {
-          mensagem: msg.mensagem,
-          sender: msg.sender,
-          // Certifique-se que os campos opcionais estão sendo passados corretamente
-          ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
-          ...(msg.mediaType && { mediaType: msg.mediaType }),
-          ...(msg.fileName && { fileName: msg.fileName }),
-        });
+        // Usar timeout para evitar atualizar o estado durante uma renderização
+        setTimeout(() => {
+          // Adicionar a mensagem ao canal correspondente
+          addMessageToChannel(targetChannelId, {
+            mensagem: msg.mensagem,
+            sender: msg.sender,
+            // Certifique-se que os campos opcionais estão sendo passados corretamente
+            ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
+            ...(msg.mediaType && { mediaType: msg.mediaType }),
+            ...(msg.fileName && { fileName: msg.fileName }),
+          });
+        }, 10);
       }
-    }; // Configurar evento de novas mensagens manualmente
+    };
+
+    // Configurar evento de novas mensagens manualmente
     socket.off('novaMensagem', handleNovaMensagem);
     socket.on('novaMensagem', handleNovaMensagem);
 
     // Limpar listeners quando o componente for desmontado
     return () => {
-      if (socket) {
-        socket.off('novaMensagem', handleNovaMensagem);
-      }
+      socket.off('novaMensagem', handleNovaMensagem);
     };
-  }, [currentChannelId, socket, markChannelAsRead, addMessageToChannel]);
+  }, [socket]); // Removida dependência de addMessageToChannel para evitar loops
 
   return (
     <div className='h-full flex flex-col'>

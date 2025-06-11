@@ -8,7 +8,7 @@ export { useAuth } from '../hooks/useAuth';
 
 // Tipos para integração com backend
 export type ChatMessage = {
-  sender: 'usuario' | 'atendente' | 'sistema'; // Adicionado 'sistema' para mensagens do sistema
+  sender: 'USUARIO' | 'ATENDENTE' | 'SISTEMA'; // Adicionado 'sistema' para mensagens do sistema
   nome?: string;
   setor?: string;
   mensagem: string;
@@ -224,7 +224,6 @@ export function useChatActions(socket: Socket | null) {
     if (file.type.startsWith('audio/')) return 'audio';
     return 'document';
   };
-
   return {
     iniciarAtendimento,
     entrarAtendimento,
