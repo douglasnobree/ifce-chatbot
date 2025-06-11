@@ -15,6 +15,38 @@ import { ChatWindow } from '@/components/ChatWindow';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Cross2Icon, SquareIcon, PlusIcon } from '@radix-ui/react-icons';
 
+// Interface para os dados retornados pelo backend
+interface Protocolo {
+  id: string;
+  numero: string;
+  status: string; // "ABERTO", "EM_ATENDIMENTO", etc
+  assunto?: string;
+  sessao_id?: string; // ID da sessão de atendimento
+  setor: string;
+  data_criacao: Date;
+  data_fechamento?: Date;
+  estudante?: {
+    id: string;
+    nome: string;
+    telefone: string;
+    email: string;
+    curso: string;
+  };
+  atendente?: {
+    id: string;
+    nome: string;
+    email: string;
+    cargo?: string;
+    departamento?: string;
+  };
+  mensagens_protocolo?: Array<{
+    id: string;
+    conteudo: string;
+    origem: string;
+    timestamp: Date;
+  }>;
+}
+
 export function MultiChannelChat() {
   const {
     activeChannels,
@@ -25,125 +57,185 @@ export function MultiChannelChat() {
     setCurrentChannel,
     markChannelAsRead,
     updateChannelStatus,
+    addMessageToChannel,
   } = useActiveChannels();
 
   const { socket } = useWebSocket();
   const actions = useChatActions(socket);
   const { user } = useAuth();
-
-  // Estado para simular carregamento
+  // Estado para controlar carregamento
   const [isLoading, setIsLoading] = useState(false);
-  // Efeito para carregar chamados pendentes simulados ao montar o componente
+  // Efeito para carregar os atendimentos do backend
   useEffect(() => {
-    // Simular alguns chamados pendentes
-    const mockPendingChannels = [
-      {
-        id: 'channel-001',
-        name: 'João da Silva',
-        status: 'aguardando' as const,
-        lastMessage: 'Preciso de ajuda com minha matrícula',
-        lastMessageTime: new Date(Date.now() - 1000 * 60 * 5), // 5 minutos atrás
-        studentInfo: {
-          name: 'João da Silva',
-          id: '20210001',
-          course: 'Ciência da Computação',
-        },
-      },
-      {
-        id: 'channel-002',
-        name: 'Maria Santos',
-        status: 'aguardando' as const,
-        lastMessage: 'Como faço para acessar o sistema acadêmico?',
-        lastMessageTime: new Date(Date.now() - 1000 * 60 * 15), // 15 minutos atrás
-        studentInfo: {
-          name: 'Maria Santos',
-          id: '20210002',
-          course: 'Engenharia Civil',
-        },
-      },
-      {
-        id: 'channel-003',
-        name: 'Carlos Ferreira',
-        status: 'aguardando' as const,
-        lastMessage: 'Não consigo visualizar minhas notas',
-        lastMessageTime: new Date(Date.now() - 1000 * 60 * 30), // 30 minutos atrás
-        studentInfo: {
-          name: 'Carlos Ferreira',
-          id: '20210003',
-          course: 'Administração',
-        },
-      },
-    ];
+    setIsLoading(true);
 
-    // Adicionar os chamados pendentes ao estado
-    mockPendingChannels.forEach((channel) => {
-      addChannel(channel);
-    });
-  }, []); // Removida a dependência addChannel para evitar loop infinito
-  // Função para atender um chamado pendente
+    // Função para mapear o status do backend para o formato do front
+    const mapStatus = (
+      status: string
+    ): 'aguardando' | 'em_atendimento' | 'encerrado' => {
+      switch (status) {
+        case 'ABERTO':
+          return 'aguardando';
+        case 'EM_ATENDIMENTO':
+          return 'em_atendimento';
+        case 'FECHADO':
+        case 'CANCELADO':
+          return 'encerrado';
+        default:
+          return 'aguardando';
+      }
+    };
+
+    // Função para converter protocolo para o formato de canal
+    const mapProtocoloToChannel = (protocolo: Protocolo) => {
+      // Obtém a última mensagem do protocolo, se disponível
+      const ultimaMensagem =
+        protocolo.mensagens_protocolo &&
+        protocolo.mensagens_protocolo.length > 0
+          ? protocolo.mensagens_protocolo[
+              protocolo.mensagens_protocolo.length - 1
+            ].conteudo
+          : protocolo.assunto || 'Novo atendimento';
+
+      return {
+        id: protocolo.id,
+        name: protocolo.estudante?.nome || `Protocolo ${protocolo.numero}`,
+        status: mapStatus(protocolo.status),
+        lastMessage: ultimaMensagem,
+        lastMessageTime: new Date(protocolo.data_criacao),
+        sessionId: protocolo.sessao_id || protocolo.id,
+        studentInfo: protocolo.estudante
+          ? {
+              name: protocolo.estudante.nome,
+              id: protocolo.estudante.id,
+              course: protocolo.estudante.curso,
+              contactInfo: protocolo.estudante.telefone,
+            }
+          : undefined,
+      };
+    }; // Handler para o evento 'atendimentosAbertos'
+    const handleAtendimentosAbertos = (protocolos: Protocolo[]) => {
+      console.log('Atendimentos recebidos:', protocolos);
+
+      // Converter protocolos para o formato de canais e adicionar
+      protocolos.forEach((protocolo) => {
+        const channel = mapProtocoloToChannel(protocolo);
+        addChannel(channel);
+      });
+
+      setIsLoading(false);
+    };
+
+    // Configurar eventos do socket manualmente em vez de usar useChatEvents
+    if (socket) {
+      // Limpar listener anterior se existir
+      socket.off('atendimentosAbertos', handleAtendimentosAbertos);
+
+      // Registrar novo listener
+      socket.on('atendimentosAbertos', handleAtendimentosAbertos);
+
+      // Solicitar a lista de atendimentos
+      actions.listarAtendimentos();
+    }
+
+    // Cleanup quando o componente for desmontado
+    return () => {
+      if (socket) {
+        socket.off('atendimentosAbertos', handleAtendimentosAbertos);
+      }
+    };
+
+    // Não precisamos de cleanup manual pois useChatEvents já cuida disso
+  }, [socket, addChannel, actions]); // Incluindo addChannel na dependência com segurança// Função para atender um chamado pendente
   const handleAttendChannel = (channelId: string) => {
     setIsLoading(true);
 
-    // Simulando um tempo de carregamento
-    setTimeout(() => {
-      // Atualiza o status do canal para "em_atendimento"
-      // (updateChannelStatus já vai adicionar aos ativos e selecionar o canal)
-      updateChannelStatus(channelId, 'em_atendimento');
+    // Atualiza o status do canal para "em_atendimento"
+    updateChannelStatus(channelId, 'em_atendimento');
 
-      // Simula uma mensagem de início de atendimento
-      const channel = pendingChannels.find((c) => c.id === channelId);
+    const channel = pendingChannels.find((c) => c.id === channelId);
 
-      if (channel) {
-        actions.entrarAtendimento({
-          sessao_id: channelId,
-          nome: user?.firstName || 'Atendente',
-          setor: user?.departamento || 'Geral',
-          atendenteId: user?.atendenteId || 'unknown',
-        });
-      }
+    // Entra no atendimento usando as informações do usuário logado
+    if (channel) {
+      console.log(channel)
+      actions.entrarAtendimento({
+        // @ts-ignore
+        sessao_id: channel?.sessionId, // Este é o ID do protocolo no backend
+        nome: user?.firstName || 'Atendente',
+        setor: user?.departamento || 'Geral',
+        atendenteId: user?.atendenteId || 'unknown',
+      });
+    }
 
-      setIsLoading(false);
-    }, 1000);
+    setIsLoading(false);
   };
-
   // Função para encerrar um atendimento
   const handleCloseChannel = (channelId: string) => {
     if (window.confirm('Deseja realmente encerrar este atendimento?')) {
+      // Comunica ao backend que o atendimento foi encerrado
       actions.encerrarAtendimento({ sessao_id: channelId });
+
+      // Remove o canal da interface
       removeChannel(channelId);
     }
-  };
-
-  // Função para enviar uma mensagem
+  }; // Função para enviar uma mensagem
   const handleSendMessage = (channelId: string, message: string) => {
     if (!channelId || !message.trim()) return;
 
+    // Enviar a mensagem para o protocolo no backend
     actions.enviarMensagem({
-      sessao_id: channelId,
+      sessao_id: channelId, // O ID do canal é o ID do protocolo
       mensagem: message,
       sender: 'atendente',
     });
-  };
 
-  // Configurar eventos para o canal atual
+    console.log(`Mensagem enviada para o protocolo ${channelId}: ${message}`);
+  }; // Configurar eventos para mensagens e marcar como lidas quando o canal atual muda
   useEffect(() => {
-    if (!currentChannelId || !socket) return;
+    if (!socket) return;
 
     // Marcar mensagens como lidas ao selecionar o canal
-    markChannelAsRead(currentChannelId);
-
-    // Configurar eventos de chat para o canal atual
-    //@ts-ignore
-    const onNovaMensagem = (msg) => {
+    if (currentChannelId) {
+      markChannelAsRead(currentChannelId);
+    } // Handler para novas mensagens
+    const handleNovaMensagem = (msg: {
+      sessao_id?: string;
+      protocolo_id?: string;
+      mensagem: string;
+      sender: 'usuario' | 'atendente' | 'sistema';
+      nome?: string;
+      setor?: string;
+      mediaUrl?: string;
+      mediaType?: 'image' | 'document' | 'video' | 'audio';
+      fileName?: string;
+    }) => {
       console.log('Nova mensagem recebida:', msg);
-    };
 
-    socket.on('novaMensagem', onNovaMensagem);
+      // Identificar o canal correto para adicionar a mensagem
+      const targetChannelId = msg.protocolo_id || msg.sessao_id;
 
+      if (targetChannelId) {
+        // Adicionar a mensagem ao canal correspondente
+        addMessageToChannel(targetChannelId, {
+          mensagem: msg.mensagem,
+          sender: msg.sender,
+          // Certifique-se que os campos opcionais estão sendo passados corretamente
+          ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
+          ...(msg.mediaType && { mediaType: msg.mediaType }),
+          ...(msg.fileName && { fileName: msg.fileName }),
+        });
+      }
+    }; // Configurar evento de novas mensagens manualmente
+    socket.off('novaMensagem', handleNovaMensagem);
+    socket.on('novaMensagem', handleNovaMensagem);
+
+    // Limpar listeners quando o componente for desmontado
     return () => {
-      socket.off('novaMensagem', onNovaMensagem);
+      if (socket) {
+        socket.off('novaMensagem', handleNovaMensagem);
+      }
     };
-  }, [currentChannelId, socket, markChannelAsRead]);
+  }, [currentChannelId, socket, markChannelAsRead, addMessageToChannel]);
 
   return (
     <div className='h-full flex flex-col'>
@@ -242,7 +334,7 @@ export function MultiChannelChat() {
                         className='ml-1 p-1 rounded-full hover:bg-gray-200 text-gray-500'
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleCloseChannel(channel.id);
+                          handleCloseChannel(channel.sessionId);
                         }}>
                         <Cross2Icon className='h-3 w-3' />
                       </button>
@@ -260,7 +352,7 @@ export function MultiChannelChat() {
                     <ChatWindow
                       messages={channel.messages}
                       onSendMessage={(msg) =>
-                        handleSendMessage(channel.id, msg)
+                        handleSendMessage(channel.sessionId, msg)
                       }
                       isConnected={true}
                       title={`Atendimento - ${channel.name}`}

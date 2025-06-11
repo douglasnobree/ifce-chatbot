@@ -18,6 +18,7 @@ export type ActiveChannel = {
   lastMessageTime?: Date;
   unreadCount: number;
   messages: ChatMessage[];
+  sessionId: string // ID da sessão de atendimento, se aplicável
   isActive: boolean; // Indica se está selecionado atualmente
   studentInfo?: {
     name?: string;
