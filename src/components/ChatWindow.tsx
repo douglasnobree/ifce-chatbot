@@ -1,204 +1,242 @@
-'use client';
+"use client"
 
-import { useState, useEffect, useRef } from 'react';
-import { ChatMessage } from '@/hooks/useWebSocket';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardHeader,
-  CardContent,
-  CardFooter,
-} from '@/components/ui/card';
+import { useState, useEffect, useRef } from "react"
+import type { ChatMessage } from "@/hooks/useWebSocket"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Send, User, Bot, Phone, Mail, GraduationCap, Clock, Download, FileText, Loader2 } from "lucide-react"
+
+interface StudentInfo {
+  name: string
+  id: string
+  course: string
+  contactInfo: string
+  email?: string
+}
 
 interface ChatWindowProps {
-  messages: ChatMessage[];
-  onSendMessage: (message: string) => void;
-  isConnected: boolean;
-  title?: string;
-  placeholder?: string;
-  loading?: boolean;
+  messages: ChatMessage[]
+  onSendMessage: (message: string) => void
+  isConnected: boolean
+  title?: string
+  studentInfo?: StudentInfo
+  placeholder?: string
+  loading?: boolean
 }
 
 export function ChatWindow({
   messages,
   onSendMessage,
   isConnected,
-  title = 'Chat',
-  placeholder = 'Digite sua mensagem...',
+  title = "Chat",
+  studentInfo,
+  placeholder = "Digite sua mensagem...",
   loading = false,
 }: ChatWindowProps) {
-  const [messageText, setMessageText] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [messageText, setMessageText] = useState("")
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll para última mensagem
   useEffect(() => {
     if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      const scrollContainer = messagesEndRef.current.closest("[data-radix-scroll-area-viewport]")
+      if (scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight
+      }
     }
-  }, [messages]);
+  }, [messages])
 
   const handleSendMessage = () => {
-    if (!messageText.trim() || !isConnected) return;
+    if (!messageText.trim() || !isConnected) return
+    onSendMessage(messageText)
+    setMessageText("")
+  }
 
-    onSendMessage(messageText);
-    setMessageText('');
-  };
-  // Função para renderizar diferentes tipos de mensagens
   const renderMessage = (msg: ChatMessage, index: number) => {
-    // Detecta se é mensagem do sistema
-    const isSystemMessage = msg.sender === 'SISTEMA';
+    const isSystemMessage = msg.sender === "SISTEMA"
+    const isUser = msg.sender === "USUARIO"
+    const isAttendant = msg.sender === "ATENDENTE"
 
-    // Determina estilo baseado no remetente
-    const isUser = msg.sender === 'USUARIO';
-    const isAttendant = msg.sender === 'ATENDENTE';
-    
-    const bgColor = isSystemMessage
-      ? 'bg-gray-100 text-gray-700'
-      : isUser
-      ? 'bg-blue-100 text-blue-900'
-      : 'bg-green-100 text-green-900';
-
-    // Alinhamento: usuário à esquerda, atendente à direita, sistema no centro
-    const alignment = isSystemMessage
-      ? 'mx-auto text-center italic max-w-xs'
-      : isUser
-      ? 'mr-auto' // Usuário à esquerda
-      : 'ml-auto'; // Atendente à direita
+    if (isSystemMessage) {
+      return (
+        <div key={index} className="flex justify-center my-4">
+          <div className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-xs italic">{msg.mensagem}</div>
+        </div>
+      )
+    }
 
     return (
-      <div key={index} className={`mb-3 max-w-[75%] ${alignment}`}>
-        {!isSystemMessage && (
-          <div className={`flex items-center gap-2 mb-1 ${isUser ? '' : 'justify-end'}`}>
-            {isUser && (
-              <div className="h-6 w-6 rounded-full flex items-center justify-center bg-blue-500 text-white">
-                U
-              </div>
-            )}
-            <span className='text-xs font-medium'>
-              {isUser ? msg.nome || 'Usuário' : msg.nome || 'Atendente'}
-            </span>
-            {isAttendant && (
-              <div className="h-6 w-6 rounded-full flex items-center justify-center bg-green-500 text-white">
-                A
-              </div>
-            )}
+      <div key={index} className={`flex mb-4 ${isUser ? "justify-start" : "justify-end"}`}>
+        <div className={`flex max-w-[80%] ${isUser ? "flex-row" : "flex-row-reverse"}`}>
+          <div className={`flex-shrink-0 ${isUser ? "mr-3" : "ml-3"}`}>
+            <div
+              className={`h-8 w-8 rounded-full flex items-center justify-center ${
+                isUser ? "bg-blue-500" : "bg-green-500"
+              }`}
+            >
+              {isUser ? <User className="h-4 w-4 text-white" /> : <Bot className="h-4 w-4 text-white" />}
+            </div>
           </div>
-        )}
 
-        <div className={`p-3 rounded-lg ${bgColor}`}>
-          {msg.mensagem}
+          <div className={`flex flex-col ${isUser ? "items-start" : "items-end"}`}>
+            <div className="flex items-center space-x-2 mb-1">
+              <span className="text-xs font-medium text-slate-600">
+                {isUser ? studentInfo?.name || "Estudante" : msg.nome || "Atendente"}
+              </span>
+              <span className="text-xs text-slate-400">
+                {msg.timestamp
+                  ? new Date(msg.timestamp).toLocaleTimeString("pt-BR", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : ""}
+              </span>
+            </div>
 
-          {/* Renderiza mídia se existir */}
-          {msg.mediaUrl && (
-            <div className='mt-2'>
-              {msg.mediaType === 'image' ? (
-                <img
-                  src={msg.mediaUrl}
-                  alt={msg.fileName || 'Imagem'}
-                  className='max-w-full rounded-md'
-                />
-              ) : (
-                <a
-                  href={msg.mediaUrl}
-                  target='_blank'
-                  rel='noopener noreferrer'
-                  className='flex items-center gap-2 text-blue-600 hover:underline'>
-                  <svg
-                    xmlns='http://www.w3.org/2000/svg'
-                    width='16'
-                    height='16'
-                    viewBox='0 0 24 24'
-                    fill='none'
-                    stroke='currentColor'
-                    strokeWidth='2'
-                    strokeLinecap='round'
-                    strokeLinejoin='round'>
-                    <path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path>
-                    <polyline points='7 10 12 15 17 10'></polyline>
-                    <line x1='12' y1='15' x2='12' y2='3'></line>
-                  </svg>
-                  {msg.fileName || 'Anexo'}
-                </a>
+            <div
+              className={`rounded-lg px-4 py-2 ${
+                isUser
+                  ? "bg-blue-50 text-blue-900 border border-blue-200"
+                  : "bg-green-50 text-green-900 border border-green-200"
+              }`}
+            >
+              <p className="text-sm whitespace-pre-wrap">{msg.mensagem}</p>
+
+              {msg.mediaUrl && (
+                <div className="mt-2">
+                  {msg.mediaType === "image" ? (
+                    <div className="relative">
+                      <img
+                        src={msg.mediaUrl || "/placeholder.svg"}
+                        alt={msg.fileName || "Imagem"}
+                        className="max-w-full h-auto rounded-md border"
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex items-center space-x-2 p-2 bg-white rounded border">
+                      <FileText className="h-4 w-4 text-slate-500" />
+                      <span className="text-sm text-slate-700 flex-1 truncate">{msg.fileName || "Anexo"}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={() => window.open(msg.mediaUrl, "_blank")}
+                      >
+                        <Download className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <Card className='w-full h-full flex flex-col'>
-      <CardHeader className='py-3 px-4 border-b'>
-        <div className='flex justify-between items-center'>
-          <div className='font-semibold'>{title}</div>
-          <div className='flex items-center'>
-            <span
-              className={`w-2 h-2 rounded-full mr-2 ${
-                isConnected ? 'bg-green-500' : 'bg-red-500'
-              }`}></span>
-            <span className='text-sm'>
-              {isConnected ? 'Online' : 'Offline'}
-            </span>
           </div>
         </div>
-      </CardHeader>
+      </div>
+    )
+  }
 
-      <CardContent className='flex-grow p-0 relative'>
-        <div className='p-4 h-full overflow-y-auto max-h-[400px]'>
-          {loading ? (
-            <div className='flex justify-center items-center h-full'>
-              <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900'></div>
+  return (
+    <div className="h-full flex flex-col max-h-[calc(100vh-200px)]">
+      {/* Header com informações do estudante */}
+      {studentInfo && (
+        <div className="border-b bg-slate-50/50 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center">
+                <User className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-900">{studentInfo.name}</h3>
+                <p className="text-sm text-slate-500">ID: {studentInfo.id}</p>
+              </div>
             </div>
-          ) : messages.length === 0 ? (
-            <div className='flex flex-col items-center justify-center h-full text-gray-400'>
-              <svg
-                xmlns='http://www.w3.org/2000/svg'
-                width='48'
-                height='48'
-                viewBox='0 0 24 24'
-                fill='none'
-                stroke='currentColor'
-                strokeWidth='1'
-                strokeLinecap='round'
-                strokeLinejoin='round'>
-                <path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'></path>
-              </svg>
-              <p className='mt-2'>Nenhuma mensagem para exibir</p>
-              {isConnected && <p className='text-sm'>Comece uma conversa!</p>}
+
+            <div className="flex items-center space-x-1">
+              <div className={`h-2 w-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`} />
+              <span className="text-xs text-slate-500">{isConnected ? "Online" : "Offline"}</span>
             </div>
-          ) : (
-            <div className='py-2'>
-              {messages.map(renderMessage)}
-              <div ref={messagesEndRef} />
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div className="flex items-center space-x-1 text-slate-600">
+              <GraduationCap className="h-3 w-3" />
+              <span className="truncate">{studentInfo.course}</span>
             </div>
-          )}
+            <div className="flex items-center space-x-1 text-slate-600">
+              <Phone className="h-3 w-3" />
+              <span>{studentInfo.contactInfo}</span>
+            </div>
+            {studentInfo.email && (
+              <div className="flex items-center space-x-1 text-slate-600">
+                <Mail className="h-3 w-3" />
+                <span className="truncate">{studentInfo.email}</span>
+              </div>
+            )}
+          </div>
         </div>
-      </CardContent>
+      )}
 
-      <CardFooter className='p-2 border-t'>
-        <div className='flex w-full gap-2'>
+      {/* Área de mensagens */}
+      <div className="flex-1 relative min-h-0">
+        <ScrollArea className="h-full max-h-[calc(100vh-300px)]">
+          <div className="p-4 min-h-full">
+            {loading ? (
+              <div className="flex justify-center items-center h-32">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                <span className="ml-2 text-sm text-slate-500">Carregando mensagens...</span>
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-32 text-center">
+                <div className="h-12 w-12 rounded-full bg-slate-100 flex items-center justify-center mb-3">
+                  <Bot className="h-6 w-6 text-slate-400" />
+                </div>
+                <p className="text-slate-600 font-medium">Nenhuma mensagem ainda</p>
+                <p className="text-sm text-slate-400 mt-1">
+                  {isConnected ? "Comece uma conversa!" : "Aguardando conexão..."}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {messages.map(renderMessage)}
+                <div ref={messagesEndRef} className="h-1" />
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+
+      {/* Input de mensagem */}
+      <div className="border-t bg-white p-4">
+        <div className="flex space-x-2">
           <Input
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
             placeholder={placeholder}
             disabled={!isConnected || loading}
-            className='flex-grow'
+            className="flex-1"
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleSendMessage();
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSendMessage()
               }
             }}
           />
           <Button
             onClick={handleSendMessage}
-            disabled={!isConnected || !messageText.trim() || loading}>
-            Enviar
+            disabled={!isConnected || !messageText.trim() || loading}
+            className="px-4"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
-      </CardFooter>
-    </Card>
-  );
+
+        {!isConnected && (
+          <div className="flex items-center justify-center mt-2 text-xs text-amber-600">
+            <Clock className="h-3 w-3 mr-1" />
+            Reconectando...
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

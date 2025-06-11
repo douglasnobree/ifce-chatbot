@@ -15,6 +15,7 @@ export type ChatMessage = {
   mediaUrl?: string;
   mediaType?: 'image' | 'document' | 'video' | 'audio';
   fileName?: string;
+  timestamp: string; // ISO 8601
 };
 
 export type AtendimentoSession = {
