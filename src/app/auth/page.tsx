@@ -7,29 +7,60 @@ export default function AuthPage() {
   const { login, loading, isAuthenticated, user } = useAuth();
   const router = useRouter();
   const [loggingIn, setLoggingIn] = useState(false);
-  const [redirected, setRedirected] = useState(false);
 
   // Redirecionar para a página principal se estiver autenticado
   useEffect(() => {
-    // Só redireciona se estiver autenticado, não estiver carregando, e não tiver redirecionado ainda
-    if (isAuthenticated && !loading && !redirected) {
+    // Redireciona se estiver autenticado e não estiver carregando
+    if (isAuthenticated && !loading) {
       console.log('Redirecionando usuário autenticado para home');
-      setRedirected(true);
 
-      // Adicionar um pequeno atraso para evitar loops
-      const timer = setTimeout(() => {
-        router.push('/');
-      }, 500);
+      // Forçar o redirecionamento imediatamente
+      try {
+        // Usar replace em vez de push para substituir o histórico e evitar voltar para login
+        router.replace('/atendimento');
 
-      return () => clearTimeout(timer);
+        // Fallback: se após 1 segundo ainda estiver nesta página, tentar redirecionamento direto
+        const timer = setTimeout(() => {
+          console.log('Usando fallback de redirecionamento');
+          window.location.href = '/atendimento';
+        }, 1000);
+
+        return () => clearTimeout(timer);
+      } catch (error) {
+        console.error('Erro ao redirecionar:', error);
+        window.location.href = '/atendimento';
+      }
     }
-  }, [isAuthenticated, loading, redirected, router]);
-
+  }, [isAuthenticated, loading, router]);
   const handleLogin = () => {
     console.log('Iniciando processo de login');
     setLoggingIn(true);
-    // Adicionando delay para atualizar UI antes do redirecionamento
-    setTimeout(() => login(), 100);
+
+    try {
+      // Adicionando delay para atualizar UI antes do redirecionamento
+      setTimeout(() => {
+        login();
+
+        // Fallback: verificar se o login iniciou corretamente
+        const loginCheckTimer = setTimeout(() => {
+          console.log(
+            'Verificando se o redirecionamento para autenticação ocorreu'
+          );
+          if (document.location.href.includes('/auth')) {
+            console.log('Forçando redirecionamento para autenticação');
+            const apiUrl =
+              process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+            window.location.href = `${apiUrl}/auth/google`;
+          }
+        }, 2000);
+
+        return () => clearTimeout(loginCheckTimer);
+      }, 100);
+    } catch (error) {
+      console.error('Erro ao iniciar login:', error);
+      alert('Erro ao iniciar o processo de login. Por favor, tente novamente.');
+      setLoggingIn(false);
+    }
   };
 
   if (loading) {
@@ -49,8 +80,12 @@ export default function AuthPage() {
       </div>
     );
   }
-
   if (isAuthenticated) {
+    // Forçar redirecionamento imediato
+    setTimeout(() => {
+      window.location.href = '/atendimento';
+    }, 100);
+
     return (
       <div className='flex flex-col items-center justify-center h-screen gap-4'>
         <h2 className='text-xl font-bold'>Você já está autenticado!</h2>
@@ -58,6 +93,23 @@ export default function AuthPage() {
         <p className='text-sm text-gray-500 mt-2'>
           Redirecionando para a página principal...
         </p>
+        <div className='w-8 h-8 border-4 border-t-blue-500 border-b-transparent border-l-transparent border-r-transparent rounded-full animate-spin'></div>
+        <p className='text-sm text-gray-500 mt-2'>
+          Se não for redirecionado, clique no botão abaixo:
+        </p>
+        <button
+          className='px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition'
+          onClick={() => {
+            try {
+              // Tenta router primeiro, depois fallback para window.location
+              router.replace('/atendimento');
+              setTimeout(() => (window.location.href = '/atendimento'), 100);
+            } catch (error) {
+              window.location.href = '/atendimento';
+            }
+          }}>
+          Ir para a página principal
+        </button>
       </div>
     );
   }

@@ -36,13 +36,27 @@ export const AuthService = {
       throw error;
     }
   },
-
   // Redirecionar para login Google
   loginWithGoogle: (): void => {
-    const url = `${
-      process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
-    }/auth/google`;
-    window.location.href = url;
+    try {
+      const url = `${
+        process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+      }/auth/google`;
+
+      console.log('Redirecionando para autenticação Google:', url);
+
+      // Adicionar timestamp para evitar cache
+      const redirectUrl = `${url}?t=${new Date().getTime()}`;
+
+      // Garantir que o redirecionamento aconteça
+      setTimeout(() => {
+        window.location.href = redirectUrl;
+      }, 100);
+    } catch (error) {
+      console.error('Erro ao redirecionar para autenticação Google:', error);
+      alert('Erro ao iniciar autenticação. Por favor, tente novamente.');
+      throw error;
+    }
   },
 
   // Logout

@@ -10,7 +10,6 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated, loading, login } = useAuth();
   const router = useRouter();
   const [redirecting, setRedirecting] = useState(false);
-
   useEffect(() => {
     // Se não estiver autenticado, não estiver carregando e não estiver redirecionando já
     if (!isAuthenticated && !loading && !redirecting) {
@@ -21,8 +20,28 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
       if (!isFromAuthRoute) {
         setRedirecting(true);
-        // Redirecionar para página de login em vez de chamar login() diretamente
-        router.push('/auth');
+        console.log('Redirecionando para página de autenticação');
+
+        // Usar replace em vez de push para evitar problemas com o histórico
+        try {
+          router.replace('/auth');
+
+          // Fallback - se o redirecionamento do router falhar
+          setTimeout(() => {
+            if (
+              typeof window !== 'undefined' &&
+              !window.location.pathname.includes('/auth')
+            ) {
+              console.log('Usando fallback para redirecionamento');
+              window.location.href = '/auth';
+            }
+          }, 500);
+        } catch (error) {
+          console.error('Erro ao redirecionar para autenticação:', error);
+          if (typeof window !== 'undefined') {
+            window.location.href = '/auth';
+          }
+        }
       }
     }
   }, [isAuthenticated, loading, redirecting, router]);

@@ -50,11 +50,7 @@ export default function Home() {
             <span className='text-sm'>{user?.name || user?.email}</span>
 
             <div className='mt-4 flex flex-col gap-4 items-center'>
-              <a
-                href='/chat-demo'
-                className='px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors'>
-                Acessar Demo de Chat WebSocket
-              </a>
+              
               <a
                 href='/atendimento'
                 className='px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors'>
