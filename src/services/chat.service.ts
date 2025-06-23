@@ -7,7 +7,7 @@ import { Channel } from '@/providers/WebSocketProvider';
 
 // Interface para mensagens do chat
 export interface ChatMessage {
-  sender: 'usuario' | 'atendente';
+  sender: 'USUARIO' | 'ATENDENTE'  // Adicionado 'sistema' para mensagens do sistema
   nome?: string;
   setor?: string;
   mensagem: string;
@@ -34,7 +34,7 @@ export const ChatService = {
   sendMessage: async (
     channelId: string,
     message: string,
-    sender: 'usuario' | 'atendente'
+    sender: 'USUARIO' | 'ATENDENTE'
   ): Promise<boolean> => {
     try {
       await api.post(`/chat/message/${channelId}`, {
@@ -52,7 +52,7 @@ export const ChatService = {
   sendFile: async (
     channelId: string,
     file: File,
-    sender: 'usuario' | 'atendente'
+    sender: 'USUARIO' | 'ATENDENTE'
   ): Promise<{ success: boolean; fileUrl?: string }> => {
     try {
       const formData = new FormData();

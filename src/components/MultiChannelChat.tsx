@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useActiveChannels } from '@/hooks/useActiveChannels';
 import {
   useWebSocket,
-  useChatEvents,
   useChatActions,
   ChatMessage,
 } from '@/hooks/useWebSocket';
@@ -15,7 +14,6 @@ import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { ChatWindow } from '@/components/ChatWindow';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import {
   X,
   MessageSquare,
@@ -73,7 +71,8 @@ export function MultiChannelChat() {
     addMessageToChannel,
   } = useActiveChannels();
 
-  const { socket } = useWebSocket();
+  const { socket, connectToChannel, disconnectFromChannel, connectedChannels } =
+    useWebSocket();
   const actions = useChatActions(socket);
   const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
@@ -81,10 +80,29 @@ export function MultiChannelChat() {
     string | null
   >(null);
 
+  // Refs para gerenciar estado sem causar re-renderizações
   const loadedHistoryChannelsRef = useRef<Set<string>>(new Set());
   const processedProtocolsRef = useRef<Set<string>>(new Set());
   const channelCacheRef = useRef<Record<string, boolean>>({});
+  const currentChannelIdRef = useRef<string | null>(null);
 
+  // Mantém a ref atualizada com o valor atual
+  useEffect(() => {
+    currentChannelIdRef.current = currentChannelId;
+  }, [currentChannelId]);
+
+  // Desconecta de todos os canais quando o componente é desmontado
+  useEffect(() => {
+    return () => {
+      if (socket && connectedChannels.length > 0) {
+        connectedChannels.forEach((channelId) => {
+          disconnectFromChannel(channelId);
+        });
+      }
+    };
+  }, [socket, connectedChannels, disconnectFromChannel]);
+
+  // Mapeia o status do protocolo para o formato usado no front-end
   const mapStatus = (
     status: string
   ): 'aguardando' | 'em_atendimento' | 'encerrado' => {
@@ -180,14 +198,15 @@ export function MultiChannelChat() {
     return () => {
       socket.off('atendimentosAbertos', handleAtendimentosAbertos);
     };
-  }, [socket]);
+  }, [socket, addChannel]);
 
+  // Handle para novas mensagens
   useEffect(() => {
     if (!socket) return;
 
     const handleNovaMensagem = (msg: {
       sessao_id?: string;
-      protocolo_id?: string;
+      protocoloId?: string;
       mensagem: string;
       sender: 'USUARIO' | 'ATENDENTE' | 'SISTEMA';
       nome?: string;
@@ -196,19 +215,42 @@ export function MultiChannelChat() {
       mediaType?: 'image' | 'document' | 'video' | 'audio';
       fileName?: string;
     }) => {
-      const targetChannelId = msg.protocolo_id || msg.sessao_id;
-
+      const targetChannelId = msg.protocoloId;
+      console.log(targetChannelId, msg)
       if (targetChannelId) {
-        setTimeout(() => {
-          addMessageToChannel(targetChannelId, {
-            mensagem: msg.mensagem,
-            sender: msg.sender,
-            timestamp: new Date(),
-            ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
-            ...(msg.mediaType && { mediaType: msg.mediaType }),
-            ...(msg.fileName && { fileName: msg.fileName }),
-          });
-        }, 10);
+
+        // Verifica se já estamos conectados a este canal
+        console.log('Conectando ao canal:', targetChannelId);
+        console.log('Canais conectados:', connectedChannels);
+        if (!connectedChannels.includes(targetChannelId)) {
+          console.log('Conectando ao canal via WebSocket:', connectedChannels);
+          connectToChannel(targetChannelId);
+        }
+        console.log('Conectado ao canal:', targetChannelId);
+        // Adiciona a mensagem ao canal
+        addMessageToChannel(targetChannelId, {
+          mensagem: msg.mensagem,
+          sender: msg.sender,
+          timestamp: new Date(),
+          ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
+          ...(msg.mediaType && { mediaType: msg.mediaType }),
+          ...(msg.fileName && { fileName: msg.fileName }),
+        });
+
+        // Se esta mensagem é para o canal atual, marca como lido
+        const currentId = currentChannelIdRef.current;
+        if (currentId) {
+          const channel = activeChannels.find(
+            (ch) => ch.id === currentId && ch.sessionId === targetChannelId
+          );
+
+          if (channel) {
+            // Usando setTimeout para quebrar o ciclo de atualizações
+            setTimeout(() => {
+              markChannelAsRead(currentId);
+            }, 0);
+          }
+        }
       }
     };
 
@@ -218,15 +260,75 @@ export function MultiChannelChat() {
     return () => {
       socket.off('novaMensagem', handleNovaMensagem);
     };
-  }, [socket]);
+  }, [
+    socket,
+    connectedChannels,
+    connectToChannel,
+    addMessageToChannel,
+    activeChannels,
+    markChannelAsRead,
+  ]);
 
+  // Efeito para conectar ao canal WebSocket quando um canal é selecionado
   useEffect(() => {
-    if (!currentChannelId) return;
-    setTimeout(() => {
-      markChannelAsRead(currentChannelId);
-    }, 0);
-  }, [currentChannelId]);
+    if (!currentChannelId || !socket) return;
 
+    const activeChannel = activeChannels.find(
+      (channel) => channel.id === currentChannelId
+    );
+
+    if (activeChannel) {
+      // Verifica se já estamos conectados a este canal
+      if (!connectedChannels.includes(activeChannel.sessionId)) {
+        connectToChannel(activeChannel.sessionId);
+      }
+
+      // Marca o canal como lido em um setTimeout para evitar loops
+      setTimeout(() => {
+        markChannelAsRead(currentChannelId);
+      }, 0);
+    }
+  }, [
+    currentChannelId,
+    socket,
+    activeChannels,
+    connectedChannels,
+    connectToChannel,
+    markChannelAsRead,
+  ]);
+
+  // Função para carregar o histórico de mensagens ao selecionar um canal
+  const loadChannelHistory = useCallback(
+    (channelId: string) => {
+      // Verifica se já carregamos o histórico deste canal antes
+      if (loadedHistoryChannelsRef.current.has(channelId)) {
+        return; // Já carregamos o histórico deste canal
+      }
+
+      const channel = [...activeChannels, ...pendingChannels].find(
+        (c) => c.id === channelId
+      );
+
+      if (channel && socket) {
+        console.log(`Carregando histórico para o canal: ${channel.sessionId}`);
+        // Aqui você pode implementar uma chamada para carregar histórico específico
+        // Exemplo: actions.carregarHistoricoMensagens({ sessao_id: channel.sessionId });
+
+        // Marca este canal como já tendo seu histórico carregado
+        loadedHistoryChannelsRef.current.add(channelId);
+      }
+    },
+    [activeChannels, pendingChannels, socket]
+  );
+
+  // Carrega histórico de mensagens quando um canal é selecionado
+  useEffect(() => {
+    if (currentChannelId) {
+      loadChannelHistory(currentChannelId);
+    }
+  }, [currentChannelId, loadChannelHistory]);
+
+  // Função para atender um canal (chamado pendente)
   const handleAttendChannel = (channelId: string) => {
     setIsLoading(true);
     const channel = pendingChannels.find((c) => c.id === channelId);
@@ -236,34 +338,55 @@ export function MultiChannelChat() {
       return;
     }
 
-    updateChannelStatus(channelId, 'em_atendimento');
-    actions.entrarAtendimento({
-      sessao_id: channel?.sessionId,
-      nome: user?.firstName || 'Atendente',
-      setor: user?.departamento || 'Geral',
-      atendenteId: user?.atendenteId || 'unknown',
-    });
+    try {
+      // Primeiro atualiza o status do canal
+      updateChannelStatus(channelId, 'em_atendimento');
 
-    setIsLoading(false);
+      // Entra no atendimento via socket
+      actions.entrarAtendimento({
+        sessao_id: channel.sessionId,
+        nome: user?.firstName || 'Atendente',
+        setor: user?.departamento || 'Geral',
+        atendenteId: user?.atendenteId || 'unknown',
+      });
+
+      // Conecta ao canal do WebSocket
+      if (!connectedChannels.includes(channel.sessionId)) {
+        connectToChannel(channel.sessionId);
+      }
+    } catch (error) {
+      console.error('Erro ao atender canal:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
+  // Função para encerrar um canal
   const handleCloseChannel = (channelId: string) => {
     if (window.confirm('Deseja realmente encerrar este atendimento?')) {
       actions.encerrarAtendimento({ sessao_id: channelId });
+
+      // Desconecta do canal do WebSocket
+      if (connectedChannels.includes(channelId)) {
+        disconnectFromChannel(channelId);
+      }
+
       removeChannel(channelId);
     }
   };
 
+  // Função para enviar mensagem
   const handleSendMessage = (channelId: string, message: string) => {
     if (!channelId || !message.trim()) return;
 
     actions.enviarMensagem({
       sessao_id: channelId,
       mensagem: message,
-      sender: 'atendente',
+      sender: 'ATENDENTE',
     });
   };
 
+  // Função para obter ícone de status
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'aguardando':
@@ -276,6 +399,7 @@ export function MultiChannelChat() {
         return <AlertCircle className='h-4 w-4 text-gray-500' />;
     }
   };
+
   return (
     <div className='grid grid-cols-1 lg:grid-cols-4 gap-4 h-full w-full min-h-[calc(100vh-240px)] max-w-full mx-auto container'>
       {/* Painel de Chamados Pendentes */}
@@ -398,7 +522,12 @@ export function MultiChannelChat() {
           ) : (
             <Tabs
               value={currentChannelId || undefined}
-              onValueChange={setCurrentChannel}
+              onValueChange={(value) => {
+                // Use setTimeout para evitar ciclos de renderização
+                setTimeout(() => {
+                  setCurrentChannel(value);
+                }, 0);
+              }}
               className='h-full flex flex-col'>
               <div className='border-b bg-slate-50/50'>
                 <ScrollArea className='w-full'>

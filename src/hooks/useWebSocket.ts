@@ -143,7 +143,7 @@ export function useChatActions(socket: Socket | null) {
   const enviarMensagem = async (data: {
     sessao_id: string;
     mensagem: string;
-    sender: 'usuario' | 'atendente';
+    sender: 'USUARIO' | 'ATENDENTE';
     mediaUrl?: string;
     mediaType?: 'image' | 'document' | 'video' | 'audio';
     fileName?: string;
@@ -164,7 +164,7 @@ export function useChatActions(socket: Socket | null) {
     sessao_id: string;
     file: File;
     mensagem?: string;
-    sender: 'usuario' | 'atendente';
+    sender: 'USUARIO' | 'ATENDENTE';
   }) => {
     if (!socket) return false;
 
