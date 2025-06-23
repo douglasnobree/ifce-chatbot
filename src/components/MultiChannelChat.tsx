@@ -91,17 +91,6 @@ export function MultiChannelChat() {
     currentChannelIdRef.current = currentChannelId;
   }, [currentChannelId]);
 
-  // Desconecta de todos os canais quando o componente é desmontado
-  useEffect(() => {
-    return () => {
-      if (socket && connectedChannels.length > 0) {
-        connectedChannels.forEach((channelId) => {
-          disconnectFromChannel(channelId);
-        });
-      }
-    };
-  }, [socket, connectedChannels, disconnectFromChannel]);
-
   // Mapeia o status do protocolo para o formato usado no front-end
   const mapStatus = (
     status: string
@@ -118,8 +107,13 @@ export function MultiChannelChat() {
         return 'aguardando';
     }
   };
-
   const mapProtocoloToChannel = (protocolo: Protocolo) => {
+    console.log(
+      'Mapeando protocolo para canal:',
+      protocolo.id,
+      protocolo.sessao_id
+    );
+
     const ultimaMensagem =
       protocolo.mensagens_protocolo && protocolo.mensagens_protocolo.length > 0
         ? protocolo.mensagens_protocolo[
@@ -139,8 +133,7 @@ export function MultiChannelChat() {
           timestamp: new Date(msg.timestamp),
         }))
       : [];
-
-    return {
+    const channel = {
       id: protocolo.id,
       name: protocolo.estudante?.nome || `Protocolo ${protocolo.numero}`,
       status: mapStatus(protocolo.status),
@@ -158,6 +151,9 @@ export function MultiChannelChat() {
           }
         : undefined,
     };
+
+    console.log('Canal mapeado:', channel.id, 'sessionId:', channel.sessionId);
+    return channel;
   };
 
   useEffect(() => {
@@ -198,8 +194,7 @@ export function MultiChannelChat() {
     return () => {
       socket.off('atendimentosAbertos', handleAtendimentosAbertos);
     };
-  }, [socket, addChannel]);
-  // Handle para novas mensagens
+  }, [socket, addChannel]); // Handle para novas mensagens
   useEffect(() => {
     if (!socket) return;
 
@@ -219,43 +214,44 @@ export function MultiChannelChat() {
       console.log('Nova mensagem recebida:', targetSessionId, msg);
 
       if (targetSessionId) {
-        // Buscar o canal correspondente à sessão em ambos os tipos de canais (ativos e pendentes)
-        let targetChannel = activeChannels.find(
-          (ch) => ch.sessionId === targetSessionId
+        // Busca em todos os canais (ativos e pendentes) usando tanto sessionId quanto id
+        let targetChannel = [...activeChannels, ...pendingChannels].find(
+          (ch) => ch.sessionId === targetSessionId || ch.id === targetSessionId
         );
 
-        // Se não encontramos em canais ativos, procuramos em canais pendentes
-        if (!targetChannel) {
-          targetChannel = pendingChannels.find(
-            (ch) => ch.sessionId === targetSessionId
-          );
+        // Log detalhado para rastreamento
+        console.log('Buscando canal para sessão/protocolo:', targetSessionId);
+        console.log(
+          'Canais ativos disponíveis:',
+          activeChannels.map((ch) => ({ id: ch.id, sessionId: ch.sessionId }))
+        );
+        console.log(
+          'Canais pendentes disponíveis:',
+          pendingChannels.map((ch) => ({ id: ch.id, sessionId: ch.sessionId }))
+        );
+        console.log(
+          'Canal encontrado:',
+          targetChannel
+            ? `${targetChannel.id} (Status: ${targetChannel.status})`
+            : 'Nenhum'
+        );
 
-          // Se encontrarmos em canais pendentes e for uma mensagem do usuário,
-          // movemos o canal para ativos automaticamente
-          if (targetChannel && msg.sender === 'USUARIO') {
-            console.log(
-              'Canal encontrado em pendentes, movendo para ativos:',
-              targetChannel.id
-            );
-            updateChannelStatus(targetChannel.id, 'em_atendimento');
-          }
-        }
-
+        // Se encontramos o canal em qualquer lista, adicionamos a mensagem
         if (targetChannel) {
           console.log(
             'Canal encontrado:',
             targetChannel.id,
-            'Tipo de mensagem:',
+            'Adicionando mensagem do tipo:',
             msg.sender
           );
 
-          // Verifica se já estamos conectados a este canal
+          // Garantir que estamos conectados ao canal via WebSocket
           if (!connectedChannels.includes(targetSessionId)) {
             console.log('Conectando ao canal via WebSocket:', targetSessionId);
             connectToChannel(targetSessionId);
           }
 
-          // Adiciona a mensagem ao canal usando o ID do canal (não o sessionId)
+          // Adicionar a mensagem ao canal
           addMessageToChannel(targetChannel.id, {
             mensagem: msg.mensagem,
             sender: msg.sender,
@@ -266,17 +262,108 @@ export function MultiChannelChat() {
             ...(msg.fileName && { fileName: msg.fileName }),
           });
 
-          // Se esta mensagem é para o canal atual, marca como lido
-          const currentId = currentChannelIdRef.current;
-          if (currentId === targetChannel.id) {
-            // Usando setTimeout para quebrar o ciclo de atualizações
+          // Marcar como lido se este é o canal ativo
+          if (currentChannelId === targetChannel.id) {
             setTimeout(() => {
-              markChannelAsRead(currentId);
+              markChannelAsRead(targetChannel.id);
             }, 0);
           }
-        } else {
-          console.log('Canal não encontrado para a sessão:', targetSessionId);
-          // Podemos implementar uma lógica para solicitar informações do protocolo se necessário
+        }
+        // Se não encontramos um canal e é mensagem de USUARIO ou ATENDENTE, processamos de forma adequada
+        else {
+          if (msg.sender === 'USUARIO') {
+            console.log(
+              'Canal não encontrado para usuário:',
+              targetSessionId,
+              '- Criando novo canal'
+            );
+
+            try {
+              // Criar um novo canal para mensagem de usuário sem canal existente
+              const novoCanal = {
+                id: targetSessionId,
+                name:
+                  msg.nome ||
+                  `Novo atendimento ${targetSessionId.substring(0, 8)}`,
+                status: 'aguardando' as
+                  | 'aguardando'
+                  | 'em_atendimento'
+                  | 'encerrado',
+                lastMessage: msg.mensagem,
+                lastMessageTime: new Date(),
+                sessionId: targetSessionId,
+                messages: [
+                  {
+                    mensagem: msg.mensagem,
+                    sender: msg.sender,
+                    timestamp: new Date(),
+                    ...(msg.nome && { nome: msg.nome }),
+                    ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
+                    ...(msg.mediaType && { mediaType: msg.mediaType }),
+                    ...(msg.fileName && { fileName: msg.fileName }),
+                  },
+                ],
+                studentInfo: {
+                  name: msg.nome || 'Cliente',
+                  id: targetSessionId,
+                  contactInfo: 'Chat',
+                  course: 'Não especificado',
+                },
+              };
+
+              // Adicionar o novo canal como pendente
+              addChannel(novoCanal);
+              console.log('Novo canal criado:', targetSessionId);
+
+              // Registrar para evitar duplicação
+              channelCacheRef.current[targetSessionId] = true;
+
+              // Conectar ao canal
+              connectToChannel(targetSessionId);
+
+              // Solicitar mais informações sobre este protocolo
+              if (socket) {
+                socket.emit('solicitarInfoProtocolo', {
+                  protocoloId: targetSessionId,
+                });
+              }
+            } catch (error) {
+              console.error('Erro ao criar novo canal:', error);
+            }
+          } else if (msg.sender === 'ATENDENTE') {
+            console.log('Mensagem de atendente sem canal correspondente:', msg);
+
+            // Busca mais profunda por canais que possam corresponder a esta mensagem
+            const potencialCanal = [...activeChannels, ...pendingChannels].find(
+              (ch) =>
+                ch.id.includes(targetSessionId) ||
+                (targetSessionId && targetSessionId.includes(ch.id))
+            );
+
+            if (potencialCanal) {
+              console.log(
+                'Canal potencial encontrado para mensagem de atendente:',
+                potencialCanal.id
+              );
+
+              // Adicionar a mensagem ao canal potencial
+              addMessageToChannel(potencialCanal.id, {
+                mensagem: msg.mensagem,
+                sender: msg.sender,
+                timestamp: new Date(),
+                ...(msg.nome && { nome: msg.nome }),
+                ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
+                ...(msg.mediaType && { mediaType: msg.mediaType }),
+                ...(msg.fileName && { fileName: msg.fileName }),
+              });
+            } else {
+              console.log(
+                'Não foi possível encontrar um canal para a mensagem do atendente'
+              );
+            }
+          } else {
+            console.log('Mensagem de sistema sem canal correspondente:', msg);
+          }
         }
       }
     };
@@ -289,13 +376,17 @@ export function MultiChannelChat() {
     };
   }, [
     socket,
-    connectedChannels,
     connectToChannel,
+    disconnectFromChannel,
     addMessageToChannel,
+    addChannel,
     activeChannels,
     pendingChannels,
     markChannelAsRead,
     updateChannelStatus,
+    setCurrentChannel,
+    currentChannelId,
+    connectedChannels,
   ]);
 
   // Efeito para conectar ao canal WebSocket quando um canal é selecionado
@@ -355,8 +446,7 @@ export function MultiChannelChat() {
     if (currentChannelId) {
       loadChannelHistory(currentChannelId);
     }
-  }, [currentChannelId, loadChannelHistory]);
-  // Função para atender um canal (chamado pendente)
+  }, [currentChannelId, loadChannelHistory]); // Função para atender um canal (chamado pendente)
   const handleAttendChannel = (channelId: string) => {
     setIsLoading(true);
     const channel = pendingChannels.find((c) => c.id === channelId);
@@ -370,10 +460,34 @@ export function MultiChannelChat() {
     try {
       console.log('Atendendo canal:', channel.id, 'sessão:', channel.sessionId);
 
-      // Primeiro atualiza o status do canal
+      // Verifica se o canal ainda existe antes de atualizar seu status
+      const channelAtual = pendingChannels.find((c) => c.id === channelId);
+      if (!channelAtual) {
+        console.warn(
+          'Canal não encontrado na lista de pendentes, operação cancelada'
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      // Conecta ao canal do WebSocket se ainda não estiver conectado - fazemos isso antes de alterar status
+      const sessionIdToConnect = channel.sessionId;
+      if (!connectedChannels.includes(sessionIdToConnect)) {
+        console.log('Conectando ao canal WebSocket:', sessionIdToConnect);
+        connectToChannel(sessionIdToConnect);
+      } else {
+        console.log('Canal WebSocket já conectado:', sessionIdToConnect);
+      }
+
+      // Primeiro atualiza o status do canal - isso move o canal para ativos
+      console.log(
+        'Atualizando status do canal para em_atendimento:',
+        channelId
+      );
       updateChannelStatus(channelId, 'em_atendimento');
 
       // Envia uma mensagem de sistema informando que o atendente entrou
+      console.log('Adicionando mensagem de sistema para novo atendente');
       addMessageToChannel(channel.id, {
         mensagem: `${user?.firstName || 'Atendente'} entrou no atendimento`,
         sender: 'SISTEMA',
@@ -388,13 +502,19 @@ export function MultiChannelChat() {
         atendenteId: user?.atendenteId || 'unknown',
       });
 
-      // Conecta ao canal do WebSocket
+      // Conecta ao canal do WebSocket se ainda não estiver conectado
       if (!connectedChannels.includes(channel.sessionId)) {
         connectToChannel(channel.sessionId);
+        console.log('Conectado ao canal WebSocket:', channel.sessionId);
+      } else {
+        console.log('Canal WebSocket já conectado:', channel.sessionId);
       }
 
-      // Seleciona o canal automaticamente
-      setCurrentChannel(channel.id);
+      // Seleciona o canal automaticamente usando setTimeout para evitar ciclos
+      setTimeout(() => {
+        setCurrentChannel(channel.id);
+        console.log('Canal selecionado:', channel.id);
+      }, 100);
     } catch (error) {
       console.error('Erro ao atender canal:', error);
     } finally {
@@ -427,35 +547,70 @@ export function MultiChannelChat() {
         removeChannel(channel.id);
       }
     }
-  }; // Função para enviar mensagem
+  };
+  // Função para enviar mensagem
   const handleSendMessage = (channelId: string, message: string) => {
     if (!channelId || !message.trim()) return;
 
     console.log('Enviando mensagem para o canal:', channelId);
 
-    // Também adicionamos localmente para garantir que a UI seja atualizada imediatamente
-    // Encontramos o canal ativo correspondente a esta sessão
-    const activeChannel = activeChannels.find(
-      (ch) => ch.sessionId === channelId
+    // Buscamos o canal de forma mais robusta, em canais ativos ou pendentes
+    const targetChannel = [...activeChannels, ...pendingChannels].find(
+      (ch) => ch.sessionId === channelId || ch.id === channelId
     );
 
-    if (activeChannel) {
+    if (targetChannel) {
+      console.log(
+        'Canal encontrado para enviar mensagem:',
+        targetChannel.id,
+        'sessionId:',
+        targetChannel.sessionId
+      );
+
       // Adicionamos a mensagem localmente primeiro para atualização imediata da UI
-      addMessageToChannel(activeChannel.id, {
+      addMessageToChannel(targetChannel.id, {
         mensagem: message,
         sender: 'ATENDENTE',
         nome: user?.firstName || 'Atendente',
         timestamp: new Date(),
       });
 
+      // Verificamos se estamos conectados ao WebSocket para este canal
+      if (!connectedChannels.includes(targetChannel.sessionId)) {
+        console.log(
+          'Conectando ao canal WebSocket antes de enviar mensagem:',
+          targetChannel.sessionId
+        );
+        connectToChannel(targetChannel.sessionId);
+      }
+
+      // Garantir que o canal esteja como em atendimento antes de enviar mensagem
+      if (targetChannel.status !== 'em_atendimento') {
+        console.log(
+          'Atualizando status do canal para em_atendimento antes de enviar mensagem'
+        );
+        updateChannelStatus(targetChannel.id, 'em_atendimento');
+      }
+
       // Em seguida, enviamos a mensagem pelo socket
+      console.log(
+        'Enviando mensagem via socket para sessão:',
+        targetChannel.sessionId
+      );
       actions.enviarMensagem({
-        sessao_id: channelId,
+        sessao_id: targetChannel.sessionId,
         mensagem: message,
         sender: 'ATENDENTE',
       });
     } else {
       console.error('Canal não encontrado para enviar mensagem:', channelId);
+      console.log(
+        'Canais disponíveis:',
+        [...activeChannels, ...pendingChannels].map((ch) => ({
+          id: ch.id,
+          sessionId: ch.sessionId,
+        }))
+      );
     }
   };
 
