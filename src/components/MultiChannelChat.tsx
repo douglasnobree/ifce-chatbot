@@ -199,7 +199,6 @@ export function MultiChannelChat() {
       socket.off('atendimentosAbertos', handleAtendimentosAbertos);
     };
   }, [socket, addChannel]);
-
   // Handle para novas mensagens
   useEffect(() => {
     if (!socket) return;
@@ -215,41 +214,69 @@ export function MultiChannelChat() {
       mediaType?: 'image' | 'document' | 'video' | 'audio';
       fileName?: string;
     }) => {
-      const targetChannelId = msg.protocoloId;
-      console.log(targetChannelId, msg)
-      if (targetChannelId) {
+      // Usar sessao_id como identificador principal, com fallback para protocoloId
+      const targetSessionId = msg.sessao_id || msg.protocoloId;
+      console.log('Nova mensagem recebida:', targetSessionId, msg);
 
-        // Verifica se já estamos conectados a este canal
-        console.log('Conectando ao canal:', targetChannelId);
-        console.log('Canais conectados:', connectedChannels);
-        if (!connectedChannels.includes(targetChannelId)) {
-          console.log('Conectando ao canal via WebSocket:', connectedChannels);
-          connectToChannel(targetChannelId);
-        }
-        console.log('Conectado ao canal:', targetChannelId);
-        // Adiciona a mensagem ao canal
-        addMessageToChannel(targetChannelId, {
-          mensagem: msg.mensagem,
-          sender: msg.sender,
-          timestamp: new Date(),
-          ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
-          ...(msg.mediaType && { mediaType: msg.mediaType }),
-          ...(msg.fileName && { fileName: msg.fileName }),
-        });
+      if (targetSessionId) {
+        // Buscar o canal correspondente à sessão em ambos os tipos de canais (ativos e pendentes)
+        let targetChannel = activeChannels.find(
+          (ch) => ch.sessionId === targetSessionId
+        );
 
-        // Se esta mensagem é para o canal atual, marca como lido
-        const currentId = currentChannelIdRef.current;
-        if (currentId) {
-          const channel = activeChannels.find(
-            (ch) => ch.id === currentId && ch.sessionId === targetChannelId
+        // Se não encontramos em canais ativos, procuramos em canais pendentes
+        if (!targetChannel) {
+          targetChannel = pendingChannels.find(
+            (ch) => ch.sessionId === targetSessionId
           );
 
-          if (channel) {
+          // Se encontrarmos em canais pendentes e for uma mensagem do usuário,
+          // movemos o canal para ativos automaticamente
+          if (targetChannel && msg.sender === 'USUARIO') {
+            console.log(
+              'Canal encontrado em pendentes, movendo para ativos:',
+              targetChannel.id
+            );
+            updateChannelStatus(targetChannel.id, 'em_atendimento');
+          }
+        }
+
+        if (targetChannel) {
+          console.log(
+            'Canal encontrado:',
+            targetChannel.id,
+            'Tipo de mensagem:',
+            msg.sender
+          );
+
+          // Verifica se já estamos conectados a este canal
+          if (!connectedChannels.includes(targetSessionId)) {
+            console.log('Conectando ao canal via WebSocket:', targetSessionId);
+            connectToChannel(targetSessionId);
+          }
+
+          // Adiciona a mensagem ao canal usando o ID do canal (não o sessionId)
+          addMessageToChannel(targetChannel.id, {
+            mensagem: msg.mensagem,
+            sender: msg.sender,
+            timestamp: new Date(),
+            ...(msg.nome && { nome: msg.nome }),
+            ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
+            ...(msg.mediaType && { mediaType: msg.mediaType }),
+            ...(msg.fileName && { fileName: msg.fileName }),
+          });
+
+          // Se esta mensagem é para o canal atual, marca como lido
+          const currentId = currentChannelIdRef.current;
+          if (currentId === targetChannel.id) {
             // Usando setTimeout para quebrar o ciclo de atualizações
             setTimeout(() => {
               markChannelAsRead(currentId);
             }, 0);
           }
+        } else {
+          console.log('Canal não encontrado para a sessão:', targetSessionId);
+          // Podemos implementar uma lógica para solicitar informações do protocolo se necessário
         }
       }
     };
@@ -266,7 +293,9 @@ export function MultiChannelChat() {
     connectToChannel,
     addMessageToChannel,
     activeChannels,
+    pendingChannels,
     markChannelAsRead,
+    updateChannelStatus,
   ]);
 
   // Efeito para conectar ao canal WebSocket quando um canal é selecionado
@@ -327,20 +356,29 @@ export function MultiChannelChat() {
       loadChannelHistory(currentChannelId);
     }
   }, [currentChannelId, loadChannelHistory]);
-
   // Função para atender um canal (chamado pendente)
   const handleAttendChannel = (channelId: string) => {
     setIsLoading(true);
     const channel = pendingChannels.find((c) => c.id === channelId);
 
     if (!channel) {
+      console.error('Canal pendente não encontrado para atender:', channelId);
       setIsLoading(false);
       return;
     }
 
     try {
+      console.log('Atendendo canal:', channel.id, 'sessão:', channel.sessionId);
+
       // Primeiro atualiza o status do canal
       updateChannelStatus(channelId, 'em_atendimento');
+
+      // Envia uma mensagem de sistema informando que o atendente entrou
+      addMessageToChannel(channel.id, {
+        mensagem: `${user?.firstName || 'Atendente'} entrou no atendimento`,
+        sender: 'SISTEMA',
+        timestamp: new Date(),
+      });
 
       // Entra no atendimento via socket
       actions.entrarAtendimento({
@@ -354,36 +392,71 @@ export function MultiChannelChat() {
       if (!connectedChannels.includes(channel.sessionId)) {
         connectToChannel(channel.sessionId);
       }
+
+      // Seleciona o canal automaticamente
+      setCurrentChannel(channel.id);
     } catch (error) {
       console.error('Erro ao atender canal:', error);
     } finally {
       setIsLoading(false);
     }
   };
-
   // Função para encerrar um canal
   const handleCloseChannel = (channelId: string) => {
     if (window.confirm('Deseja realmente encerrar este atendimento?')) {
-      actions.encerrarAtendimento({ sessao_id: channelId });
+      // Busca o canal antes de encerrar
+      const channel = activeChannels.find((ch) => ch.sessionId === channelId);
 
-      // Desconecta do canal do WebSocket
-      if (connectedChannels.includes(channelId)) {
-        disconnectFromChannel(channelId);
+      if (channel) {
+        console.log(
+          'Encerrando atendimento para o canal:',
+          channel.id,
+          'sessão:',
+          channelId
+        );
+
+        // Envia a notificação de encerramento
+        actions.encerrarAtendimento({ sessao_id: channelId });
+
+        // Desconecta do canal do WebSocket
+        if (connectedChannels.includes(channelId)) {
+          disconnectFromChannel(channelId);
+        }
+
+        // Remove o canal da lista de ativos
+        removeChannel(channel.id);
       }
-
-      removeChannel(channelId);
     }
-  };
-
-  // Função para enviar mensagem
+  }; // Função para enviar mensagem
   const handleSendMessage = (channelId: string, message: string) => {
     if (!channelId || !message.trim()) return;
 
-    actions.enviarMensagem({
-      sessao_id: channelId,
-      mensagem: message,
-      sender: 'ATENDENTE',
-    });
+    console.log('Enviando mensagem para o canal:', channelId);
+
+    // Também adicionamos localmente para garantir que a UI seja atualizada imediatamente
+    // Encontramos o canal ativo correspondente a esta sessão
+    const activeChannel = activeChannels.find(
+      (ch) => ch.sessionId === channelId
+    );
+
+    if (activeChannel) {
+      // Adicionamos a mensagem localmente primeiro para atualização imediata da UI
+      addMessageToChannel(activeChannel.id, {
+        mensagem: message,
+        sender: 'ATENDENTE',
+        nome: user?.firstName || 'Atendente',
+        timestamp: new Date(),
+      });
+
+      // Em seguida, enviamos a mensagem pelo socket
+      actions.enviarMensagem({
+        sessao_id: channelId,
+        mensagem: message,
+        sender: 'ATENDENTE',
+      });
+    } else {
+      console.error('Canal não encontrado para enviar mensagem:', channelId);
+    }
   };
 
   // Função para obter ícone de status
