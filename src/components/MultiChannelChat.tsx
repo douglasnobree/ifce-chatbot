@@ -76,9 +76,7 @@ export function MultiChannelChat() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedPendingChannel, setSelectedPendingChannel] = useState<
     string | null
-  >(null);
-
-  // Refs para gerenciar estado sem causar re-renderizações
+  >(null); // Refs para gerenciar estado sem causar re-renderizações
   const loadedHistoryChannelsRef = useRef<Set<string>>(new Set());
   const processedProtocolsRef = useRef<Set<string>>(new Set());
   const channelCacheRef = useRef<Record<string, boolean>>({});
@@ -221,6 +219,7 @@ export function MultiChannelChat() {
       // Usar sessao_id como identificador principal, com fallback para protocoloId
       const targetSessionId = msg.sessao_id || msg.protocoloId;
       console.log('Nova mensagem recebida:', targetSessionId, msg);
+      console.log('Tipo da mensagem:', typeof msg, 'Sender:', msg.sender);
 
       if (targetSessionId) {
         // Busca em todos os canais (ativos e pendentes) usando tanto sessionId quanto id
@@ -260,16 +259,63 @@ export function MultiChannelChat() {
             connectToChannel(targetSessionId);
           }
 
-          // Adicionar a mensagem ao canal
-          addMessageToChannel(targetChannel.id, {
-            mensagem: msg.mensagem,
-            sender: msg.sender,
-            timestamp: new Date(),
-            ...(msg.nome && { nome: msg.nome }),
-            ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
-            ...(msg.mediaType && { mediaType: msg.mediaType }),
-            ...(msg.fileName && { fileName: msg.fileName }),
-          });
+          // Adicionar diretamente a mensagem do servidor sem verificação de duplicação
+          // Aqui passamos o ID da sessão (targetSessionId) para garantir que a mensagem seja
+          // encontrada pelo ID ou sessionId no provider
+          console.log(
+            'Tentando adicionar mensagem ao canal:',
+            targetChannel.id,
+            'usando:',
+            targetSessionId
+          );
+          console.log('Conteúdo da mensagem:', msg.mensagem);
+          try {
+            const mensagemParaAdicionar = {
+              mensagem: msg.mensagem,
+              sender: msg.sender,
+              timestamp: new Date(),
+              ...(msg.nome && { nome: msg.nome }),
+              ...(msg.mediaUrl && { mediaUrl: msg.mediaUrl }),
+              ...(msg.mediaType && { mediaType: msg.mediaType }),
+              ...(msg.fileName && { fileName: msg.fileName }),
+            };
+            console.log('Objeto de mensagem completo:', mensagemParaAdicionar);
+
+            // Passamos o targetSessionId para garantir que encontrará pelo sessionId ou id
+            addMessageToChannel(targetSessionId, mensagemParaAdicionar);
+            console.log(
+              'Mensagem adicionada com sucesso ao canal:',
+              targetChannel.id,
+              'via ID:',
+              targetSessionId
+            );
+
+            // Log detalhado do estado dos canais após adicionar mensagem
+            setTimeout(() => {
+              const canalAtualizado = [
+                ...activeChannels,
+                ...pendingChannels,
+              ].find((ch) => ch.id === targetChannel.id);
+
+              if (canalAtualizado) {
+                console.log(
+                  'Canal após adição da mensagem:',
+                  canalAtualizado.id
+                );
+                console.log(
+                  'Mensagens no canal:',
+                  canalAtualizado.messages.length
+                );
+                console.log(
+                  'Última mensagem:',
+                  canalAtualizado.messages[canalAtualizado.messages.length - 1]
+                    ?.mensagem
+                );
+              }
+            }, 0);
+          } catch (error) {
+            console.error('Erro ao adicionar mensagem:', error);
+          }
 
           // Marcar como lido se este é o canal ativo
           if (currentChannelId === targetChannel.id) {
@@ -353,9 +399,7 @@ export function MultiChannelChat() {
               console.log(
                 'Canal potencial encontrado para mensagem de atendente:',
                 potencialCanal.id
-              );
-
-              // Adicionar a mensagem ao canal potencial
+              ); // Adicionar diretamente a mensagem ao canal potencial sem verificação de duplicação
               addMessageToChannel(potencialCanal.id, {
                 mensagem: msg.mensagem,
                 sender: msg.sender,
@@ -556,8 +600,7 @@ export function MultiChannelChat() {
         removeChannel(channel.id);
       }
     }
-  };
-  // Função para enviar mensagem
+  }; // Função para enviar mensagem
   const handleSendMessage = (channelId: string, message: string) => {
     if (!channelId || !message.trim()) return;
 
@@ -576,13 +619,8 @@ export function MultiChannelChat() {
         targetChannel.sessionId
       );
 
-      // Adicionamos a mensagem localmente primeiro para atualização imediata da UI
-      addMessageToChannel(targetChannel.id, {
-        mensagem: message,
-        sender: 'ATENDENTE',
-        nome: user?.firstName || 'Atendente',
-        timestamp: new Date(),
-      });
+      // NÃO adicionamos a mensagem localmente, apenas esperamos o retorno do servidor
+      // Apenas enviamos pelo socket e deixamos o servidor retornar a mensagem
 
       // Verificamos se estamos conectados ao WebSocket para este canal
       if (!connectedChannels.includes(targetChannel.sessionId)) {
@@ -601,7 +639,7 @@ export function MultiChannelChat() {
         updateChannelStatus(targetChannel.id, 'em_atendimento');
       }
 
-      // Em seguida, enviamos a mensagem pelo socket
+      // Em seguida, enviamos a mensagem pelo socket usando o sessionId do canal
       console.log(
         'Enviando mensagem via socket para sessão:',
         targetChannel.sessionId
@@ -649,21 +687,11 @@ export function MultiChannelChat() {
 
       if (file.type.startsWith('image/')) mediaType = 'image';
       else if (file.type.startsWith('video/')) mediaType = 'video';
-      else if (file.type.startsWith('audio/')) mediaType = 'audio';
-
-      // Criar URL temporária para preview
+      else if (file.type.startsWith('audio/')) mediaType = 'audio'; // Criar URL temporária para preview (mas não vamos exibir até que o servidor retorne)
       const tempUrl = URL.createObjectURL(file);
 
-      // Adicionamos a mensagem com preview localmente para feedback imediato na UI
-      addMessageToChannel(targetChannel.id, {
-        mensagem: caption || `Arquivo: ${file.name}`,
-        sender: 'ATENDENTE',
-        nome: user?.firstName || 'Atendente',
-        mediaUrl: tempUrl,
-        mediaType: mediaType,
-        fileName: file.name,
-        timestamp: new Date(),
-      });
+      // NÃO adicionamos a mensagem com preview localmente
+      // Vamos aguardar o retorno do servidor para exibir o arquivo
 
       // Enviar o arquivo para o servidor
       const result = await ChatService.sendFile(
@@ -675,12 +703,11 @@ export function MultiChannelChat() {
       if (!result.success) {
         console.error('Erro ao enviar arquivo para o servidor');
         // Poderíamos adicionar uma mensagem de erro ao chat, se desejado
-      }
-
-      // Liberamos a URL temporária após o upload
+      } // Liberamos a URL temporária após o upload
       URL.revokeObjectURL(tempUrl);
 
-      // Enviamos mensagem pelo socket para que outros participantes saibam do arquivo
+      // Enviamos mensagem pelo socket para que todos os participantes (incluindo nós) saibam do arquivo
+      // O servidor retornará a mensagem, que será exibida pelo evento novaMensagem
       if (socket) {
         socket.emit('enviarArquivo', {
           sessao_id: targetChannel.sessionId,
@@ -708,7 +735,7 @@ export function MultiChannelChat() {
       default:
         return <AlertCircle className='h-4 w-4 text-gray-500' />;
     }
-  };
+  }; // Removido o efeito de limpeza de mensagens processadas, pois não estamos mais rastreando mensagens
 
   return (
     <div className='grid grid-cols-1 lg:grid-cols-4 gap-4 h-full w-full min-h-[calc(100vh-240px)] max-w-full mx-auto container'>

@@ -57,6 +57,21 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
   const [activeChannels, setActiveChannels] = useState<ActiveChannel[]>([]);
   const [pendingChannels, setPendingChannels] = useState<ActiveChannel[]>([]);
   const [currentChannelId, setCurrentChannelId] = useState<string | null>(null);
+
+  // Log detalhado do estado do provider
+  useEffect(() => {
+    console.log('ActiveChannelsProvider state atualizado:');
+    console.log(
+      'Canais ativos:',
+      activeChannels.map((c) => `${c.id} (session: ${c.sessionId})`)
+    );
+    console.log(
+      'Canais pendentes:',
+      pendingChannels.map((c) => `${c.id} (session: ${c.sessionId})`)
+    );
+    console.log('Canal atual:', currentChannelId);
+  }, [activeChannels, pendingChannels, currentChannelId]);
+
   // Adicionar um novo canal (com useCallback para manter a referência estável)
   const addChannel = useCallback(
     (
@@ -110,7 +125,8 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
               }
               return c;
             });
-          } // Apenas retorna os novos canais, sem atualizar o currentChannelId automaticamente
+          }
+          // Apenas retorna os novos canais, sem atualizar o currentChannelId automaticamente
           // Isso evita um ciclo infinito de atualizações
           return [...prev, newChannel];
         });
@@ -118,6 +134,7 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
     },
     [] // Não depende de nenhum estado, para evitar ciclos infinitos
   );
+
   // Remover um canal (com useCallback)
   const removeChannel = useCallback(
     (channelId: string) => {
@@ -152,7 +169,9 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
       });
     },
     [currentChannelId]
-  ); // Selecionar um canal atual (com useCallback)
+  );
+
+  // Selecionar um canal atual (com useCallback)
   const setCurrentChannel = useCallback((channelId: string) => {
     setCurrentChannelId(channelId);
 
@@ -163,32 +182,34 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
         isActive: channel.id === channelId,
       }))
     );
-  }, []); // Adicionar mensagem a um canal (com useCallback)
+  }, []);
+
+  // Adicionar mensagem a um canal (com useCallback)
   const addMessageToChannel = useCallback(
     (channelId: string, message: ChatMessage) => {
-      // Função helper para verificar mensagens duplicadas
-      const isDuplicateMessage = (
-        existingMessages: ChatMessage[],
-        newMessage: ChatMessage
-      ) => {
-        return existingMessages.some(
-          (m) =>
-            m.mensagem === newMessage.mensagem && m.sender === newMessage.sender
-        );
-      };
+      console.log(
+        'Provider - Adicionando mensagem ao canal:',
+        channelId,
+        message
+      );
 
-      // Primeiro verifica se o canal está entre os ativos
+      // Primeiro verifica se o canal está entre os ativos (pelo ID ou sessionId)
       setActiveChannels((prev) => {
-        const isActive = prev.some((c) => c.id === channelId);
+        const targetChannel = prev.find(
+          (c) => c.id === channelId || c.sessionId === channelId
+        );
 
-        if (isActive) {
+        if (targetChannel) {
+          console.log(
+            'Adicionando ao canal ativo:',
+            targetChannel.name,
+            'ID:',
+            targetChannel.id
+          );
+
           return prev.map((channel) => {
-            if (channel.id === channelId) {
-              // Verifica se a mensagem já existe no canal
-              if (isDuplicateMessage(channel.messages, message)) {
-                return channel; // Não adiciona mensagens duplicadas
-              }
-
+            if (channel.id === targetChannel.id) {
+              // Adicionamos todas as mensagens sem verificar duplicação
               return {
                 ...channel,
                 messages: [...channel.messages, message],
@@ -204,18 +225,23 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
         return prev;
       });
 
-      // Verifica se está entre os pendentes
+      // Verifica se está entre os pendentes (pelo ID ou sessionId)
       setPendingChannels((prev) => {
-        const isPending = prev.some((c) => c.id === channelId);
+        const targetChannel = prev.find(
+          (c) => c.id === channelId || c.sessionId === channelId
+        );
 
-        if (isPending) {
+        if (targetChannel) {
+          console.log(
+            'Adicionando ao canal pendente:',
+            targetChannel.name,
+            'ID:',
+            targetChannel.id
+          );
+
           return prev.map((channel) => {
-            if (channel.id === channelId) {
-              // Verifica se a mensagem já existe no canal
-              if (isDuplicateMessage(channel.messages, message)) {
-                return channel; // Não adiciona mensagens duplicadas
-              }
-
+            if (channel.id === targetChannel.id) {
+              // Adicionamos todas as mensagens ao canal pendente sem verificar duplicação
               return {
                 ...channel,
                 messages: [...channel.messages, message],
@@ -231,7 +257,9 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
       });
     },
     []
-  ); // Marcar mensagens de um canal como lidas (com useCallback)
+  );
+
+  // Marcar mensagens de um canal como lidas (com useCallback)
   const markChannelAsRead = useCallback((channelId: string) => {
     setActiveChannels((prev) => {
       return prev.map((channel) => {
@@ -244,7 +272,9 @@ export function ActiveChannelsProvider({ children }: { children: ReactNode }) {
         return channel;
       });
     });
-  }, []); // Atualizar o status de um canal (com useCallback)
+  }, []);
+
+  // Atualizar o status de um canal (com useCallback)
   const updateChannelStatus = useCallback(
     (channelId: string, status: ActiveChannel['status']) => {
       // Se o status é "em_atendimento", move de pendentes para ativos
