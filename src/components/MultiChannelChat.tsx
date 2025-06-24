@@ -119,6 +119,7 @@ export function MultiChannelChat() {
           ].conteudo
         : protocolo.assunto || 'Novo atendimento';
 
+    //@ts-ignore
     const mensagensChat: ChatMessage[] = protocolo.mensagens_protocolo
       ? protocolo.mensagens_protocolo.map((msg) => ({
           mensagem: msg.conteudo,
@@ -187,10 +188,20 @@ export function MultiChannelChat() {
 
     socket.off('atendimentosAbertos', handleAtendimentosAbertos);
     socket.on('atendimentosAbertos', handleAtendimentosAbertos);
+
+    // Chama listarAtendimentos imediatamente na inicialização
     actions.listarAtendimentos();
 
+    // Configura um intervalo para verificar novos atendimentos a cada 5 segundos
+    const intervalId = setInterval(() => {
+      console.log('Verificando novos atendimentos...');
+      actions.listarAtendimentos();
+    }, 5000);
+
+    // Limpa o intervalo quando o componente for desmontado
     return () => {
       socket.off('atendimentosAbertos', handleAtendimentosAbertos);
+      clearInterval(intervalId);
     };
   }, [socket, addChannel]); // Handle para novas mensagens
   useEffect(() => {
