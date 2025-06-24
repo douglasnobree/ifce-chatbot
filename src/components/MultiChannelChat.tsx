@@ -1,19 +1,15 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useWebSocket, useChatActions } from '@/hooks/useWebSocket';
 import { useActiveChannels } from '@/hooks/useActiveChannels';
-import {
-  useWebSocket,
-  useChatActions,
-  ChatMessage,
-} from '@/hooks/useWebSocket';
-import { useAuth } from '@/providers/AuthProvider';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardContent } from '@/components/ui/card';
+import { useAuth } from '@/hooks/useAuth';
 import { ChatWindow } from '@/components/ChatWindow';
+import { ChannelList } from '@/components/ChannelList';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
 import {
   X,
   MessageSquare,
@@ -26,6 +22,8 @@ import {
   CheckCircle2,
   Loader2,
 } from 'lucide-react';
+import { ChatService } from '@/services/chat.service';
+import { Badge } from './ui';
 
 interface Protocolo {
   id: string;
@@ -614,6 +612,79 @@ export function MultiChannelChat() {
     }
   };
 
+  // Função para enviar arquivo
+  const handleSendFile = async (
+    channelId: string,
+    file: File,
+    caption: string
+  ) => {
+    if (!channelId || !file) return;
+
+    console.log('Enviando arquivo para o canal:', channelId);
+
+    // Buscamos o canal de forma mais robusta, em canais ativos ou pendentes
+    const targetChannel = [...activeChannels, ...pendingChannels].find(
+      (ch) => ch.sessionId === channelId || ch.id === channelId
+    );
+
+    if (!targetChannel) {
+      console.error('Canal não encontrado para enviar arquivo:', channelId);
+      return;
+    }
+
+    try {
+      // Determinar o tipo de mídia com base no MIME type
+      let mediaType: 'image' | 'document' | 'video' | 'audio' = 'document';
+
+      if (file.type.startsWith('image/')) mediaType = 'image';
+      else if (file.type.startsWith('video/')) mediaType = 'video';
+      else if (file.type.startsWith('audio/')) mediaType = 'audio';
+
+      // Criar URL temporária para preview
+      const tempUrl = URL.createObjectURL(file);
+
+      // Adicionamos a mensagem com preview localmente para feedback imediato na UI
+      addMessageToChannel(targetChannel.id, {
+        mensagem: caption || `Arquivo: ${file.name}`,
+        sender: 'ATENDENTE',
+        nome: user?.firstName || 'Atendente',
+        mediaUrl: tempUrl,
+        mediaType: mediaType,
+        fileName: file.name,
+        timestamp: new Date(),
+      });
+
+      // Enviar o arquivo para o servidor
+      const result = await ChatService.sendFile(
+        targetChannel.id,
+        file,
+        caption
+      );
+
+      if (!result.success) {
+        console.error('Erro ao enviar arquivo para o servidor');
+        // Poderíamos adicionar uma mensagem de erro ao chat, se desejado
+      }
+
+      // Liberamos a URL temporária após o upload
+      URL.revokeObjectURL(tempUrl);
+
+      // Enviamos mensagem pelo socket para que outros participantes saibam do arquivo
+      if (socket) {
+        socket.emit('enviarArquivo', {
+          sessao_id: targetChannel.sessionId,
+          mensagem: caption,
+          sender: 'ATENDENTE',
+          mediaUrl: result.mediaUrl,
+          mediaType: mediaType,
+          fileName: file.name,
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao enviar arquivo:', error);
+    }
+  };
+
   // Função para obter ícone de status
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -799,10 +870,14 @@ export function MultiChannelChat() {
                   value={channel.id}
                   className='flex-1 m-0 p-0'>
                   <div className='h-full'>
+                    {' '}
                     <ChatWindow
                       messages={channel.messages}
                       onSendMessage={(msg) =>
                         handleSendMessage(channel.sessionId, msg)
+                      }
+                      onSendFile={(file, caption) =>
+                        handleSendFile(channel.sessionId, file, caption)
                       }
                       isConnected={true}
                       title={`${channel.name}`}
@@ -810,6 +885,7 @@ export function MultiChannelChat() {
                       studentInfo={channel.studentInfo}
                       placeholder='Digite sua mensagem...'
                       loading={isLoading}
+                      protocolId={channel.id}
                     />
                   </div>
                 </TabsContent>

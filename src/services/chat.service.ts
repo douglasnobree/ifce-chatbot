@@ -7,7 +7,7 @@ import { Channel } from '@/providers/WebSocketProvider';
 
 // Interface para mensagens do chat
 export interface ChatMessage {
-  sender: 'USUARIO' | 'ATENDENTE'  // Adicionado 'sistema' para mensagens do sistema
+  sender: 'USUARIO' | 'ATENDENTE'; // Adicionado 'sistema' para mensagens do sistema
   nome?: string;
   setor?: string;
   mensagem: string;
@@ -50,25 +50,36 @@ export const ChatService = {
 
   // Enviar arquivo para o backend
   sendFile: async (
-    channelId: string,
+    protocolId: string,
     file: File,
-    sender: 'USUARIO' | 'ATENDENTE'
-  ): Promise<{ success: boolean; fileUrl?: string }> => {
+    caption: string = ''
+  ): Promise<{ success: boolean; mediaUrl?: string }> => {
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('sender', sender);
-      formData.append('channelId', channelId);
+      // Determinar o tipo de mídia com base no MIME type
+      let mediaType: 'image' | 'document' | 'video' | 'audio' = 'document';
 
-      const response = await api.post(`/chat/upload/${channelId}`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      if (file.type.startsWith('image/')) mediaType = 'image';
+      else if (file.type.startsWith('video/')) mediaType = 'video';
+      else if (file.type.startsWith('audio/')) mediaType = 'audio';
+
+      const formData = new FormData();
+      formData.append('attachment', file);
+      formData.append('caption', caption);
+      formData.append('mediatype', mediaType);
+
+      const response = await api.post(
+        `/whatsapp/sendMediaFile/${protocolId}`,
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
 
       return {
         success: true,
-        fileUrl: response.data.fileUrl,
+        mediaUrl: response.data.mediaUrl,
       };
     } catch (error) {
       console.error('Erro ao enviar arquivo:', error);

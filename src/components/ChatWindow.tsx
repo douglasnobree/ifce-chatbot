@@ -16,6 +16,7 @@ import {
   Download,
   FileText,
   Loader2,
+  Paperclip,
 } from 'lucide-react';
 
 interface StudentInfo {
@@ -29,24 +30,31 @@ interface StudentInfo {
 interface ChatWindowProps {
   messages: ChatMessage[];
   onSendMessage: (message: string) => void;
+  onSendFile?: (file: File, caption: string) => Promise<void>;
   isConnected: boolean;
   title?: string;
   studentInfo?: StudentInfo;
   placeholder?: string;
   loading?: boolean;
+  protocolId?: string;
 }
 
 export function ChatWindow({
   messages,
   onSendMessage,
+  onSendFile,
   isConnected,
   title = 'Chat',
   studentInfo,
   placeholder = 'Digite sua mensagem...',
   loading = false,
+  protocolId,
 }: ChatWindowProps) {
   const [messageText, setMessageText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -61,8 +69,48 @@ export function ChatWindow({
 
   const handleSendMessage = () => {
     if (!messageText.trim() || !isConnected) return;
-    onSendMessage(messageText);
-    setMessageText('');
+
+    if (selectedFile && onSendFile) {
+      handleSendFile();
+    } else {
+      onSendMessage(messageText);
+      setMessageText('');
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedFile(e.target.files[0]);
+      // Adiciona o nome do arquivo à mensagem se estiver vazio
+      if (!messageText.trim()) {
+        setMessageText(`Arquivo: ${e.target.files[0].name}`);
+      }
+    }
+  };
+
+  const handleSendFile = async () => {
+    if (!selectedFile || !onSendFile || !isConnected) return;
+
+    try {
+      setIsUploading(true);
+      await onSendFile(selectedFile, messageText);
+      setSelectedFile(null);
+      setMessageText('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (error) {
+      console.error('Erro ao enviar arquivo:', error);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleCancelFile = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const renderMessage = (msg: ChatMessage, index: number) => {
@@ -244,12 +292,51 @@ export function ChatWindow({
       </div>
       {/* Input de mensagem */}
       <div className='border-t bg-white p-4'>
+        {selectedFile && (
+          <div className='mb-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between'>
+            <div className='flex items-center'>
+              <FileText className='h-4 w-4 text-blue-500 mr-2' />
+              <span className='text-sm text-blue-700 truncate max-w-[200px]'>
+                {selectedFile.name}
+              </span>
+              <span className='text-xs text-blue-400 ml-2'>
+                {(selectedFile.size / 1024).toFixed(1)} KB
+              </span>
+            </div>
+            <button
+              onClick={handleCancelFile}
+              className='text-red-500 hover:text-red-700'>
+              <svg
+                xmlns='http://www.w3.org/2000/svg'
+                width='16'
+                height='16'
+                viewBox='0 0 24 24'
+                fill='none'
+                stroke='currentColor'
+                strokeWidth='2'
+                strokeLinecap='round'
+                strokeLinejoin='round'>
+                <line x1='18' y1='6' x2='6' y2='18'></line>
+                <line x1='6' y1='6' x2='18' y2='18'></line>
+              </svg>
+            </button>
+          </div>
+        )}
         <div className='flex space-x-2'>
+          <input
+            type='file'
+            ref={fileInputRef}
+            onChange={handleFileSelect}
+            className='hidden'
+            accept='image/jpeg,image/png,image/gif,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,video/mp4,video/mpeg,video/webm,audio/mpeg,audio/ogg,audio/wav'
+          />
           <Input
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
-            placeholder={placeholder}
-            disabled={!isConnected || loading}
+            placeholder={
+              selectedFile ? 'Adicione uma legenda ao arquivo...' : placeholder
+            }
+            disabled={!isConnected || loading || isUploading}
             className='flex-1'
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -259,10 +346,24 @@ export function ChatWindow({
             }}
           />
           <Button
+            type='button'
+            variant='outline'
+            size='icon'
+            disabled={!isConnected || loading || isUploading}
+            onClick={() => fileInputRef.current?.click()}
+            title='Anexar arquivo'>
+            <Paperclip className='h-4 w-4' />
+          </Button>
+          <Button
             onClick={handleSendMessage}
-            disabled={!isConnected || !messageText.trim() || loading}
+            disabled={
+              !isConnected ||
+              (!messageText.trim() && !selectedFile) ||
+              loading ||
+              isUploading
+            }
             className='px-4'>
-            {loading ? (
+            {isUploading || loading ? (
               <Loader2 className='h-4 w-4 animate-spin' />
             ) : (
               <Send className='h-4 w-4' />
